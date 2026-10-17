@@ -1,4 +1,5 @@
 from datetime import datetime, date
+from decimal import Decimal
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func
 
@@ -223,6 +224,13 @@ class PartUsage(db.Model):
 # ---------------------------------------------------------------------
 class Bill(db.Model):
     __tablename__ = 'Bills'
+    __table_args__ = (
+        db.CheckConstraint('grand_total >= 0', name='check_bill_grand_total_non_negative'),
+        db.CheckConstraint('parts_total >= 0', name='check_bill_parts_total_non_negative'),
+        db.CheckConstraint('labor_total >= 0', name='check_bill_labor_total_non_negative'),
+        db.CheckConstraint('tax_amount >= 0', name='check_bill_tax_amount_non_negative'),
+        db.CheckConstraint('discount_amount >= 0', name='check_bill_discount_amount_non_negative'),
+    )
     
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     invoice_number = db.Column(db.String(50), nullable=False, unique=True, index=True)
@@ -241,25 +249,26 @@ class Bill(db.Model):
 
     @property
     def total_paid(self):
-        return sum(float(payment.amount) for payment in self.payments)
+        return sum((Decimal(str(payment.amount)) for payment in self.payments), Decimal('0.00'))
 
     @property
     def balance_due(self):
-        bal = float(self.grand_total) - self.total_paid
-        return max(0.0, round(bal, 2))
+        total = Decimal(str(self.grand_total or '0.00'))
+        bal = total - self.total_paid
+        return max(Decimal('0.00'), bal.quantize(Decimal('0.01')))
 
     def update_payment_status(self):
         paid = self.total_paid
-        total = float(self.grand_total)
-        if paid >= (total - 0.01) and total > 0:
+        total = Decimal(str(self.grand_total or '0.00'))
+        if paid >= total and total > Decimal('0.00'):
             self.payment_status = 'Paid'
-        elif paid > 0:
+        elif paid > Decimal('0.00'):
             self.payment_status = 'Partially Paid'
         else:
             self.payment_status = 'Unpaid'
 
     def __repr__(self):
-        return f"<Bill {self.invoice_number} - {self.payment_status} (${self.grand_total})>"
+        return f"<Bill {self.invoice_number} - {self.payment_status} (₹{self.grand_total})>"
 
 
 # ---------------------------------------------------------------------
@@ -267,6 +276,9 @@ class Bill(db.Model):
 # ---------------------------------------------------------------------
 class Payment(db.Model):
     __tablename__ = 'Payments'
+    __table_args__ = (
+        db.CheckConstraint('amount > 0', name='check_payment_amount_positive'),
+    )
     
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     bill_id = db.Column(db.Integer, db.ForeignKey('Bills.id', ondelete='CASCADE'), nullable=False)
@@ -277,4 +289,4 @@ class Payment(db.Model):
     notes = db.Column(db.Text, nullable=True)
 
     def __repr__(self):
-        return f"<Payment ${self.amount} for Bill #{self.bill_id} via {self.payment_method}>"
+        return f"<Payment ₹{self.amount} for Bill #{self.bill_id} via {self.payment_method}>"

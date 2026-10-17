@@ -301,5 +301,127 @@ def test_part_usage_restoration_once(client):
     res2 = client.post(f'/services/{job.id}/remove_part/{usage_id}', follow_redirects=True)
     assert res2.status_code == 404
     # Stock must remain unchanged
-    refreshed_part = db.session.get(SparePart, part.id)
     assert refreshed_part.stock_quantity == initial_stock
+
+def test_authoritative_billing_rejects_client_tampering(client):
+    """Verify that client-tampered totals are ignored and authoritative parts/labor totals are computed."""
+    # Find a booking without a bill
+    booking = ServiceBooking.query.filter(~ServiceBooking.bill.has()).first()
+    if not booking:
+        c = Customer.query.first()
+        v = c.vehicles[0]
+        booking = ServiceBooking(
+            booking_number="BK-TEST-BILL",
+            customer_id=c.id,
+            vehicle_id=v.id,
+            booking_date=date.today(),
+            booking_time="02:00 PM",
+            service_type="Brake Maintenance",
+            status="In Progress"
+        )
+        db.session.add(booking)
+        db.session.flush()
+
+    if not booking.service_detail:
+        detail = ServiceDetail(booking_id=booking.id, job_description="Brake Maintenance", labor_cost=Decimal('1500.00'), status="In Progress")
+        db.session.add(detail)
+        db.session.commit()
+        db.session.refresh(booking)
+
+    detail_id = booking.service_detail.id
+    # Add a known part to the job
+    part = SparePart.query.first()
+    client.post(f'/services/{detail_id}/add_part', data={'part_id': part.id, 'quantity': 1}, follow_redirects=True)
+
+    expected_parts_total = sum((usage.subtotal for usage in booking.service_detail.part_usages), Decimal('0.00'))
+    expected_labor_total = Decimal(str(booking.service_detail.labor_cost))
+
+    # Submit tampered form trying to claim ₹0 parts and ₹0 labor
+    res = client.post(f'/billing/generate/{booking.id}', data={
+        'parts_total': '0.00',
+        'labor_total': '0.00',
+        'tax_rate': '10.0',
+        'discount_amount': '0.00'
+    }, follow_redirects=True)
+    assert res.status_code == 200
+
+    bill = Bill.query.filter_by(booking_id=booking.id).first()
+    assert bill is not None
+    # Verify authoritative values are enforced
+    assert bill.parts_total == expected_parts_total
+    assert bill.labor_total == expected_labor_total
+    expected_subtotal = (expected_parts_total + expected_labor_total).quantize(Decimal('0.01'))
+    expected_tax = (expected_subtotal * Decimal('0.10')).quantize(Decimal('0.01'))
+    assert bill.grand_total == expected_subtotal + expected_tax
+
+def test_billing_rejects_negative_tax_discount_and_excessive_discount(client):
+    """Verify negative tax, negative discount, and excessive discount are rejected."""
+    c = Customer.query.first()
+    v = c.vehicles[0]
+    b = ServiceBooking(
+        booking_number="BK-TEST-DISC",
+        customer_id=c.id,
+        vehicle_id=v.id,
+        booking_date=date.today(),
+        booking_time="03:00 PM",
+        service_type="Diagnostic Check",
+        status="In Progress"
+    )
+    db.session.add(b)
+    db.session.flush()
+    detail = ServiceDetail(booking_id=b.id, job_description="Diagnostic", labor_cost=Decimal('500.00'), status="In Progress")
+    db.session.add(detail)
+    db.session.commit()
+
+    # Negative tax
+    res1 = client.post(f'/billing/generate/{b.id}', data={'tax_rate': '-5.0', 'discount_amount': '0.00'}, follow_redirects=True)
+    assert res1.status_code == 200
+    assert b"Tax rate must be between 0% and 100%" in res1.data
+    assert Bill.query.filter_by(booking_id=b.id).first() is None
+
+    # Negative discount
+    res2 = client.post(f'/billing/generate/{b.id}', data={'tax_rate': '0.0', 'discount_amount': '-50.00'}, follow_redirects=True)
+    assert res2.status_code == 200
+    assert b"Discount amount cannot be negative" in res2.data
+    assert Bill.query.filter_by(booking_id=b.id).first() is None
+
+    # Excessive discount (exceeds subtotal + tax)
+    res3 = client.post(f'/billing/generate/{b.id}', data={'tax_rate': '0.0', 'discount_amount': '9999.00'}, follow_redirects=True)
+    assert res3.status_code == 200
+    assert b"cannot exceed invoice total before discount" in res3.data
+    assert Bill.query.filter_by(booking_id=b.id).first() is None
+
+def test_payments_validation_and_lock_on_billed_invoices(client):
+    """Verify overpayments, invalid payment methods, and editing bills with payments are rejected."""
+    bill = Bill.query.filter_by(payment_status='Partially Paid').first()
+    assert bill is not None
+    current_balance = bill.balance_due
+
+    # Overpayment attempt
+    overpay_amount = current_balance + Decimal('50.00')
+    res_over = client.post('/payments/record', data={
+        'bill_id': bill.id,
+        'amount': str(overpay_amount),
+        'payment_method': 'Cash'
+    }, follow_redirects=True)
+    assert res_over.status_code == 200
+    assert b"cannot exceed outstanding balance" in res_over.data
+
+    # Invalid payment method
+    res_method = client.post('/payments/record', data={
+        'bill_id': bill.id,
+        'amount': '10.00',
+        'payment_method': 'CryptoCurrency'
+    }, follow_redirects=True)
+    assert res_method.status_code == 200
+    assert b"Invalid payment method" in res_method.data
+
+    # Attempting to edit a bill that already has payments must be rejected
+    res_edit = client.post(f'/billing/{bill.id}/edit', data={
+        'parts_total': '10.00',
+        'labor_total': '10.00',
+        'tax_amount': '0.00',
+        'discount_amount': '0.00'
+    }, follow_redirects=True)
+    assert res_edit.status_code == 200
+    assert b"Cannot edit an invoice that already has recorded payments" in res_edit.data

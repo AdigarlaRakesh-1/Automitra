@@ -64,8 +64,33 @@ def new_booking():
             flash('Customer, vehicle, booking date, time, and service type are all required.', 'danger')
             return render_template('bookings/form.html', customers=customers, mechanics=mechanics, preselected_customer_id=c_id, preselected_vehicle_id=v_id)
 
+        # Validate Customer existence
+        customer = db.session.get(Customer, c_id)
+        if not customer:
+            flash('Selected customer does not exist.', 'danger')
+            return render_template('bookings/form.html', customers=customers, mechanics=mechanics, preselected_customer_id=c_id, preselected_vehicle_id=v_id)
+
+        # Validate Vehicle existence
+        vehicle = db.session.get(Vehicle, v_id)
+        if not vehicle:
+            flash('Selected vehicle does not exist.', 'danger')
+            return render_template('bookings/form.html', customers=customers, mechanics=mechanics, preselected_customer_id=c_id, preselected_vehicle_id=v_id)
+
+        # Validate Customer-Vehicle Ownership
+        if vehicle.customer_id != customer.id:
+            flash(f'Vehicle {vehicle.license_plate} does not belong to customer {customer.name}.', 'danger')
+            return render_template('bookings/form.html', customers=customers, mechanics=mechanics, preselected_customer_id=c_id, preselected_vehicle_id=v_id)
+
+        # Validate booking date
         try:
             b_date = datetime.strptime(booking_date_str, '%Y-%m-%d').date()
+            if b_date.year < 2000 or b_date.year > 2100:
+                raise ValueError("Year out of valid range.")
+        except ValueError:
+            flash('Please provide a valid booking date (YYYY-MM-DD).', 'danger')
+            return render_template('bookings/form.html', customers=customers, mechanics=mechanics, preselected_customer_id=c_id, preselected_vehicle_id=v_id)
+
+        try:
             booking_number = generate_booking_number()
 
             # Ensure unique booking number
@@ -74,8 +99,8 @@ def new_booking():
 
             booking = ServiceBooking(
                 booking_number=booking_number,
-                customer_id=c_id,
-                vehicle_id=v_id,
+                customer_id=customer.id,
+                vehicle_id=vehicle.id,
                 booking_date=b_date,
                 booking_time=booking_time,
                 service_type=service_type,
@@ -90,14 +115,14 @@ def new_booking():
                 booking_id=booking.id,
                 mechanic_id=initial_mechanic_id or None,
                 job_description=f"Initial booking for: {service_type}. {notes}".strip(),
-                status='Assigned' if initial_mechanic_id else 'Assigned'
+                status='Assigned'
             )
             db.session.add(service_detail)
 
             # If mechanic assigned, update mechanic status to Busy
             if initial_mechanic_id:
                 m = db.session.get(Mechanic, initial_mechanic_id)
-                if m:
+                if m and m.status == 'Available':
                     m.status = 'Busy'
 
             db.session.commit()
@@ -120,27 +145,32 @@ def update_status(booking_id):
     booking = ServiceBooking.query.get_or_404(booking_id)
     new_status = request.form.get('status')
     
-    if new_status in ['Pending', 'Confirmed', 'In Progress', 'Completed', 'Cancelled', 'Missed']:
-        booking.status = new_status
-        # Ensure service detail exists if moving to In Progress
-        if new_status == 'In Progress' and not booking.service_detail:
-            detail = ServiceDetail(
-                booking_id=booking.id,
-                job_description=booking.service_type,
-                status='In Progress',
-                started_at=datetime.utcnow()
-            )
-            db.session.add(detail)
-        elif new_status == 'In Progress' and booking.service_detail:
-            booking.service_detail.status = 'In Progress'
-            if not booking.service_detail.started_at:
-                booking.service_detail.started_at = datetime.utcnow()
-        elif new_status == 'Completed' and booking.service_detail:
-            booking.service_detail.status = 'Completed'
+    valid_statuses = {'Pending', 'Confirmed', 'In Progress', 'Completed', 'Cancelled', 'Missed'}
+    if new_status not in valid_statuses:
+        flash(f'Invalid booking status "{new_status}".', 'danger')
+        return redirect(request.referrer or url_for('bookings.view_booking', booking_id=booking.id))
+
+    booking.status = new_status
+    # Ensure service detail exists if moving to In Progress
+    if new_status == 'In Progress' and not booking.service_detail:
+        detail = ServiceDetail(
+            booking_id=booking.id,
+            job_description=booking.service_type,
+            status='In Progress',
+            started_at=datetime.utcnow()
+        )
+        db.session.add(detail)
+    elif new_status == 'In Progress' and booking.service_detail:
+        booking.service_detail.status = 'In Progress'
+        if not booking.service_detail.started_at:
+            booking.service_detail.started_at = datetime.utcnow()
+    elif new_status == 'Completed' and booking.service_detail:
+        booking.service_detail.status = 'Completed'
+        if not booking.service_detail.completed_at:
             booking.service_detail.completed_at = datetime.utcnow()
 
-        db.session.commit()
-        flash(f'Booking #{booking.booking_number} status updated to "{new_status}".', 'info')
+    db.session.commit()
+    flash(f'Booking #{booking.booking_number} status updated to "{new_status}".', 'info')
     
     return redirect(request.referrer or url_for('bookings.view_booking', booking_id=booking.id))
 
@@ -156,6 +186,8 @@ def reschedule(booking_id):
 
     try:
         new_date = datetime.strptime(new_date_str, '%Y-%m-%d').date()
+        if new_date.year < 2000 or new_date.year > 2100:
+            raise ValueError("Year out of valid range.")
         booking.booking_date = new_date
         booking.booking_time = new_time
         booking.status = 'Confirmed'

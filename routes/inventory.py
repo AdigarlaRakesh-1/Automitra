@@ -53,14 +53,19 @@ def new_part():
         part_number = request.form.get('part_number', '').strip().upper()
         name = request.form.get('name', '').strip()
         category = request.form.get('category', '').strip()
-        cost_price = request.form.get('cost_price', type=float) or 0.0
-        selling_price = request.form.get('selling_price', type=float) or 0.0
-        stock_quantity = request.form.get('stock_quantity', type=int) or 0
-        min_reorder_level = request.form.get('min_reorder_level', type=int) or 5
-        location_bin = request.form.get('location_bin', '').strip()
+        try:
+            raw_cost = request.form.get('cost_price', '0')
+            cost_price = Decimal(str(raw_cost)) if str(raw_cost).strip() != '' else Decimal('0.00')
+            raw_selling = request.form.get('selling_price', '0')
+            selling_price = Decimal(str(raw_selling)) if str(raw_selling).strip() != '' else Decimal('0.00')
+            stock_quantity = int(request.form.get('stock_quantity', '0'))
+            min_reorder_level = int(request.form.get('min_reorder_level', '5'))
 
-        if not part_number or not name or not category:
-            flash('Part number, name, and category are required.', 'danger')
+            if cost_price < 0 or selling_price < 0 or stock_quantity < 0 or min_reorder_level < 0:
+                flash('Prices, stock quantity, and reorder level cannot be negative.', 'danger')
+                return render_template('inventory/form.html', part=None, action='Add New')
+        except (ValueError, TypeError, Exception):
+            flash('Invalid numeric values for prices or stock quantities.', 'danger')
             return render_template('inventory/form.html', part=None, action='Add New')
 
         existing = SparePart.query.filter_by(part_number=part_number).first()
@@ -73,8 +78,8 @@ def new_part():
                 part_number=part_number,
                 name=name,
                 category=category,
-                cost_price=Decimal(str(cost_price)),
-                selling_price=Decimal(str(selling_price)),
+                cost_price=cost_price,
+                selling_price=selling_price,
                 stock_quantity=stock_quantity,
                 min_reorder_level=min_reorder_level,
                 location_bin=location_bin or None
@@ -96,11 +101,26 @@ def edit_part(part_id):
         part_number = request.form.get('part_number', '').strip().upper()
         name = request.form.get('name', '').strip()
         category = request.form.get('category', '').strip()
-        cost_price = request.form.get('cost_price', type=float) or 0.0
-        selling_price = request.form.get('selling_price', type=float) or 0.0
-        stock_quantity = request.form.get('stock_quantity', type=int) or 0
-        min_reorder_level = request.form.get('min_reorder_level', type=int) or 5
         location_bin = request.form.get('location_bin', '').strip()
+
+        if not part_number or not name or not category:
+            flash('Part number, name, and category are required.', 'danger')
+            return render_template('inventory/form.html', part=part, action='Edit')
+
+        try:
+            raw_cost = request.form.get('cost_price', '0')
+            cost_price = Decimal(str(raw_cost)) if str(raw_cost).strip() != '' else Decimal('0.00')
+            raw_selling = request.form.get('selling_price', '0')
+            selling_price = Decimal(str(raw_selling)) if str(raw_selling).strip() != '' else Decimal('0.00')
+            stock_quantity = int(request.form.get('stock_quantity', '0'))
+            min_reorder_level = int(request.form.get('min_reorder_level', '5'))
+
+            if cost_price < 0 or selling_price < 0 or stock_quantity < 0 or min_reorder_level < 0:
+                flash('Prices, stock quantity, and reorder level cannot be negative.', 'danger')
+                return render_template('inventory/form.html', part=part, action='Edit')
+        except (ValueError, TypeError, Exception):
+            flash('Invalid numeric values for prices or stock quantities.', 'danger')
+            return render_template('inventory/form.html', part=part, action='Edit')
 
         # Uniqueness check
         existing = SparePart.query.filter(SparePart.part_number == part_number, SparePart.id != part.id).first()
@@ -112,8 +132,8 @@ def edit_part(part_id):
             part.part_number = part_number
             part.name = name
             part.category = category
-            part.cost_price = Decimal(str(cost_price))
-            part.selling_price = Decimal(str(selling_price))
+            part.cost_price = cost_price
+            part.selling_price = selling_price
             part.stock_quantity = stock_quantity
             part.min_reorder_level = min_reorder_level
             part.location_bin = location_bin or None
@@ -129,7 +149,10 @@ def edit_part(part_id):
 @inventory_bp.route('/<int:part_id>/restock', methods=['POST'])
 def restock_part(part_id):
     part = SparePart.query.get_or_404(part_id)
-    added_qty = request.form.get('quantity', type=int) or 0
+    try:
+        added_qty = int(request.form.get('quantity', '0'))
+    except (ValueError, TypeError):
+        added_qty = 0
 
     if added_qty <= 0:
         flash('Restock quantity must be positive.', 'warning')

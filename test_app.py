@@ -111,3 +111,110 @@ def test_all_web_routes(client):
     for ep in endpoints:
         res = client.get(ep)
         assert res.status_code == 200, f"Endpoint {ep} should return 200 OK"
+
+def test_cross_job_part_deletion_rejected(client):
+    """Verify that Job A cannot delete a PartUsage belonging to Job B."""
+    # Find two distinct service details with part usages
+    jobs = ServiceDetail.query.filter(ServiceDetail.part_usages.any()).all()
+    assert len(jobs) >= 2, "Need at least 2 jobs with part usages"
+    job_1, job_2 = jobs[0], jobs[1]
+    usage_1 = job_1.part_usages[0]
+    part = usage_1.spare_part
+    initial_stock = part.stock_quantity
+    initial_usage_count = len(job_1.part_usages)
+
+    # Attempt to delete job_1's part usage using job_2's endpoint
+    res = client.post(f'/services/{job_2.id}/remove_part/{usage_1.id}', follow_redirects=True)
+    assert res.status_code == 200
+
+    # Verify usage was NOT deleted and stock was NOT altered
+    refreshed_usage = db.session.get(PartUsage, usage_1.id)
+    assert refreshed_usage is not None, "Cross-job part usage should NOT be deleted"
+    refreshed_part = db.session.get(SparePart, part.id)
+    assert refreshed_part.stock_quantity == initial_stock, "Stock should NOT change on rejected deletion"
+    refreshed_job_1 = db.session.get(ServiceDetail, job_1.id)
+    assert len(refreshed_job_1.part_usages) == initial_usage_count
+
+def test_booking_rejects_vehicle_customer_mismatch(client):
+    """Verify that Customer A cannot book Customer B's vehicle."""
+    c1 = Customer.query.first()
+    # Find a vehicle belonging to another customer
+    v_other = Vehicle.query.filter(Vehicle.customer_id != c1.id).first()
+    assert v_other is not None
+
+    initial_booking_count = ServiceBooking.query.count()
+    res = client.post('/bookings/new', data={
+        'customer_id': c1.id,
+        'vehicle_id': v_other.id,
+        'booking_date': date.today().strftime('%Y-%m-%d'),
+        'booking_time': '10:00 AM',
+        'service_type': 'Oil Change',
+        'notes': 'Test mismatch'
+    }, follow_redirects=True)
+    assert res.status_code == 200
+
+    # Ensure no booking was created
+    assert ServiceBooking.query.count() == initial_booking_count
+    assert b"does not belong to customer" in res.data
+
+def test_booking_rejects_nonexistent_customer_or_vehicle(client):
+    """Verify booking rejects nonexistent customer or vehicle IDs."""
+    v = Vehicle.query.first()
+    initial_count = ServiceBooking.query.count()
+
+    res = client.post('/bookings/new', data={
+        'customer_id': 999999,
+        'vehicle_id': v.id,
+        'booking_date': date.today().strftime('%Y-%m-%d'),
+        'booking_time': '10:00 AM',
+        'service_type': 'Oil Change'
+    }, follow_redirects=True)
+    assert res.status_code == 200
+    assert ServiceBooking.query.count() == initial_count
+
+def test_invalid_service_and_inventory_inputs(client):
+    """Verify negative and invalid values are rejected in service and inventory forms."""
+    job = ServiceDetail.query.filter(ServiceDetail.booking.has(ServiceBooking.bill == None)).first()
+    if not job:
+        job = ServiceDetail.query.first()
+
+    # Negative labor hours
+    res = client.post(f'/services/{job.id}/update', data={
+        'job_description': 'Test',
+        'labor_hours': '-2.5',
+        'labor_cost': '100.00',
+        'status': 'Assigned'
+    }, follow_redirects=True)
+    assert res.status_code == 200
+    assert b"Labor hours cannot be negative" in res.data
+
+    # Negative labor cost
+    res = client.post(f'/services/{job.id}/update', data={
+        'job_description': 'Test',
+        'labor_hours': '1.0',
+        'labor_cost': '-50.00',
+        'status': 'Assigned'
+    }, follow_redirects=True)
+    assert res.status_code == 200
+    assert b"Labor cost cannot be negative" in res.data
+
+    # Invalid status
+    res = client.post(f'/services/{job.id}/update', data={
+        'job_description': 'Test',
+        'status': 'INVALID_STATUS'
+    }, follow_redirects=True)
+    assert res.status_code == 200
+    assert b"Invalid service job status" in res.data
+
+    # Negative stock in inventory
+    res = client.post('/inventory/new', data={
+        'part_number': 'NEG-TEST-001',
+        'name': 'Negative Part',
+        'category': 'General',
+        'cost_price': '-10.00',
+        'selling_price': '20.00',
+        'stock_quantity': '-5'
+    }, follow_redirects=True)
+    assert res.status_code == 200
+    assert b"cannot be negative" in res.data
+    assert SparePart.query.filter_by(part_number='NEG-TEST-001').first() is None

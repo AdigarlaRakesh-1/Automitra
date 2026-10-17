@@ -29,9 +29,37 @@ def update_job(detail_id):
     mechanic_id = request.form.get('mechanic_id', type=int)
     job_description = request.form.get('job_description', '').strip()
     diagnosis = request.form.get('diagnosis', '').strip()
-    labor_hours = request.form.get('labor_hours', type=float) or 1.0
-    labor_cost = request.form.get('labor_cost', type=float) or 50.0
     status = request.form.get('status', job.status)
+
+    allowed_statuses = {'Assigned', 'In Progress', 'Awaiting Parts', 'Completed'}
+    if status not in allowed_statuses:
+        flash('Invalid service job status.', 'danger')
+        return redirect(url_for('services.view_job', detail_id=job.id))
+
+    try:
+        raw_hours = request.form.get('labor_hours')
+        labor_hours = Decimal(str(raw_hours)) if raw_hours is not None and str(raw_hours).strip() != '' else Decimal('1.00')
+        if labor_hours < 0:
+            flash('Labor hours cannot be negative.', 'danger')
+            return redirect(url_for('services.view_job', detail_id=job.id))
+    except Exception:
+        flash('Labor hours must be a valid non-negative number.', 'danger')
+        return redirect(url_for('services.view_job', detail_id=job.id))
+
+    try:
+        raw_cost = request.form.get('labor_cost')
+        labor_cost = Decimal(str(raw_cost)) if raw_cost is not None and str(raw_cost).strip() != '' else Decimal('50.00')
+        if labor_cost < 0:
+            flash('Labor cost cannot be negative.', 'danger')
+            return redirect(url_for('services.view_job', detail_id=job.id))
+    except Exception:
+        flash('Labor cost must be a valid non-negative number.', 'danger')
+        return redirect(url_for('services.view_job', detail_id=job.id))
+
+    # Protect billed jobs from labor cost modification
+    if job.booking and job.booking.bill and labor_cost != job.labor_cost:
+        flash('Cannot modify labor cost for a service job that has already been billed.', 'danger')
+        return redirect(url_for('services.view_job', detail_id=job.id))
 
     try:
         # Check if mechanic changed
@@ -39,22 +67,27 @@ def update_job(detail_id):
             job.mechanic_id = mechanic_id or None
             if mechanic_id:
                 m = db.session.get(Mechanic, mechanic_id)
-                if m and m.status == 'Available':
+                if not m:
+                    flash('Selected mechanic not found.', 'danger')
+                    return redirect(url_for('services.view_job', detail_id=job.id))
+                if m.status == 'Available':
                     m.status = 'Busy'
 
         job.job_description = job_description
         job.diagnosis = diagnosis or None
-        job.labor_hours = Decimal(str(labor_hours))
-        job.labor_cost = Decimal(str(labor_cost))
+        job.labor_hours = labor_hours
+        job.labor_cost = labor_cost
         job.status = status
 
         if status == 'In Progress' and not job.started_at:
             job.started_at = datetime.utcnow()
-            job.booking.status = 'In Progress'
+            if job.booking:
+                job.booking.status = 'In Progress'
         elif status == 'Completed':
             if not job.completed_at:
                 job.completed_at = datetime.utcnow()
-            job.booking.status = 'Completed'
+            if job.booking:
+                job.booking.status = 'Completed'
 
         db.session.commit()
         flash('Job details and labor updated successfully.', 'success')
@@ -67,8 +100,12 @@ def update_job(detail_id):
 @services_bp.route('/<int:detail_id>/add_part', methods=['POST'])
 def add_part_usage(detail_id):
     job = ServiceDetail.query.get_or_404(detail_id)
+
     part_id = request.form.get('part_id', type=int)
-    quantity = request.form.get('quantity', type=int) or 1
+    try:
+        quantity = int(request.form.get('quantity', 1))
+    except (ValueError, TypeError):
+        quantity = 0
 
     if not part_id or quantity <= 0:
         flash('Please select a valid part and quantity greater than zero.', 'warning')
@@ -85,9 +122,9 @@ def add_part_usage(detail_id):
         return redirect(url_for('services.view_job', detail_id=job.id))
 
     try:
-        # Calculate subtotal
-        unit_price = part.selling_price
-        subtotal = unit_price * quantity
+        # Calculate subtotal using Decimal
+        unit_price = Decimal(str(part.selling_price))
+        subtotal = unit_price * Decimal(quantity)
 
         # Deduct stock
         part.stock_quantity -= quantity
@@ -113,6 +150,16 @@ def remove_part_usage(detail_id, usage_id):
     job = ServiceDetail.query.get_or_404(detail_id)
     usage = PartUsage.query.get_or_404(usage_id)
 
+    # Cross-Job Part Usage Ownership Validation (Prevent IDOR)
+    if usage.service_detail_id != job.id:
+        flash('Invalid operation: Part usage record does not belong to this service job.', 'danger')
+        return redirect(url_for('services.view_job', detail_id=job.id))
+
+    # Prevent removing part usage after bill is paid
+    if job.booking and job.booking.bill and job.booking.bill.payment_status == 'Paid':
+        flash('Cannot remove part usage from a service job whose invoice is already paid.', 'danger')
+        return redirect(url_for('services.view_job', detail_id=job.id))
+
     try:
         # Restore stock in inventory
         part = usage.spare_part
@@ -121,7 +168,7 @@ def remove_part_usage(detail_id, usage_id):
 
         db.session.delete(usage)
         db.session.commit()
-        flash(f'Removed part usage. Restored {usage.quantity} units to {part.name} stock.', 'info')
+        flash(f'Removed part usage. Restored {usage.quantity} units to {part.name if part else "inventory"} stock.', 'info')
     except Exception as e:
         db.session.rollback()
         flash(f'Error removing part: {str(e)}', 'danger')

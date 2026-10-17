@@ -97,10 +97,28 @@ def edit_customer(customer_id):
 @customers_bp.route('/<int:customer_id>/delete', methods=['POST'])
 def delete_customer(customer_id):
     customer = Customer.query.get_or_404(customer_id)
+
+    # Protect customers with historical bills or invoices
+    if customer.bills:
+        flash(f'Cannot delete customer "{customer.name}" because they have {len(customer.bills)} historical invoices/bills. Records must be preserved for accounting audits.', 'danger')
+        return redirect(url_for('customers.view_customer', customer_id=customer.id))
+
+    # Protect customers with active bookings
+    active_bookings = [b for b in customer.bookings if b.status in ['Pending', 'Confirmed', 'In Progress']]
+    if active_bookings:
+        flash(f'Cannot delete customer "{customer.name}" because they have {len(active_bookings)} active service booking(s).', 'danger')
+        return redirect(url_for('customers.view_customer', customer_id=customer.id))
+
+    # Protect customers with vehicles having service history
+    vehicles_with_history = [v for v in customer.vehicles if v.bookings]
+    if vehicles_with_history:
+        flash(f'Cannot delete customer "{customer.name}" because their vehicles have recorded service history.', 'danger')
+        return redirect(url_for('customers.view_customer', customer_id=customer.id))
+
     try:
         db.session.delete(customer)
         db.session.commit()
-        flash(f'Customer {customer.name} and associated records deleted.', 'info')
+        flash(f'Customer {customer.name} and unreferenced records deleted.', 'info')
     except Exception as e:
         db.session.rollback()
         flash(f'Cannot delete customer: {str(e)}', 'danger')

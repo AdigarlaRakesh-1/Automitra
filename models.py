@@ -20,8 +20,8 @@ class Customer(db.Model):
     
     # Relationships
     vehicles = db.relationship('Vehicle', backref='customer', cascade='all, delete-orphan', lazy=True)
-    bookings = db.relationship('ServiceBooking', backref='customer', cascade='all, delete-orphan', lazy=True)
-    bills = db.relationship('Bill', backref='customer', cascade='all, delete-orphan', lazy=True)
+    bookings = db.relationship('ServiceBooking', backref='customer', lazy=True)
+    bills = db.relationship('Bill', backref='customer', lazy=True)
     
     @classmethod
     def check_duplicate(cls, phone, email=None, exclude_id=None):
@@ -63,7 +63,7 @@ class Vehicle(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     # Relationships
-    bookings = db.relationship('ServiceBooking', backref='vehicle', cascade='all, delete-orphan', lazy=True)
+    bookings = db.relationship('ServiceBooking', backref='vehicle', lazy=True)
 
     @property
     def display_name(self):

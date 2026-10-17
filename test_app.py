@@ -425,3 +425,63 @@ def test_payments_validation_and_lock_on_billed_invoices(client):
     }, follow_redirects=True)
     assert res_edit.status_code == 200
     assert b"Cannot edit an invoice that already has recorded payments" in res_edit.data
+
+def test_cannot_delete_customer_with_historical_bills_or_history(client):
+    """Verify that a customer with historical bills cannot be deleted, preserving audit trails."""
+    # Find customer with bills
+    customer = Customer.query.filter(Customer.bills.any()).first()
+    assert customer is not None
+    customer_id = customer.id
+    initial_bills_count = Bill.query.count()
+    initial_payments_count = Payment.query.count()
+
+    res = client.post(f'/customers/{customer_id}/delete', follow_redirects=True)
+    assert res.status_code == 200
+    assert b"Cannot delete customer" in res.data
+    assert b"historical invoices/bills" in res.data
+
+    # Customer and financial records must still exist intact
+    assert db.session.get(Customer, customer_id) is not None
+    assert Bill.query.count() == initial_bills_count
+    assert Payment.query.count() == initial_payments_count
+
+def test_cannot_delete_vehicle_with_service_history(client):
+    """Verify that a vehicle with service history cannot be deleted."""
+    vehicle = Vehicle.query.filter(Vehicle.bookings.any()).first()
+    assert vehicle is not None
+    vehicle_id = vehicle.id
+    initial_bookings_count = ServiceBooking.query.count()
+
+    res = client.post(f'/vehicles/{vehicle_id}/delete', follow_redirects=True)
+    assert res.status_code == 200
+    assert b"Cannot delete vehicle" in res.data
+    assert b"historical service booking" in res.data
+
+    assert db.session.get(Vehicle, vehicle_id) is not None
+    assert ServiceBooking.query.count() == initial_bookings_count
+
+def test_valid_deletion_of_disposable_unreferenced_records(client):
+    """Verify that newly created, unreferenced customer and vehicle can be safely deleted."""
+    # Create disposable customer
+    c_new = Customer(name="Disposable Test User", phone="+91 99999 11111", email="disposable@test.com")
+    db.session.add(c_new)
+    db.session.commit()
+    c_id = c_new.id
+
+    # Create disposable vehicle
+    v_new = Vehicle(customer_id=c_id, license_plate="XX 00 YY 0000", make="TestMake", model="TestModel", year=2020)
+    db.session.add(v_new)
+    db.session.commit()
+    v_id = v_new.id
+
+    # Deleting vehicle without bookings should succeed
+    res_v = client.post(f'/vehicles/{v_id}/delete', follow_redirects=True)
+    assert res_v.status_code == 200
+    assert b"Vehicle removed" in res_v.data
+    assert db.session.get(Vehicle, v_id) is None
+
+    # Deleting customer without bookings or bills should succeed
+    res_c = client.post(f'/customers/{c_id}/delete', follow_redirects=True)
+    assert res_c.status_code == 200
+    assert b"deleted" in res_c.data
+    assert db.session.get(Customer, c_id) is None

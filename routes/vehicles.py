@@ -116,6 +116,12 @@ def edit_vehicle(vehicle_id):
 def delete_vehicle(vehicle_id):
     vehicle = Vehicle.query.get_or_404(vehicle_id)
     c_id = vehicle.customer_id
+
+    # Protect vehicles with historical bookings or service records
+    if vehicle.bookings:
+        flash(f'Cannot delete vehicle "{vehicle.license_plate}" because it has {len(vehicle.bookings)} historical service booking(s).', 'danger')
+        return redirect(url_for('vehicles.view_vehicle', vehicle_id=vehicle.id))
+
     try:
         db.session.delete(vehicle)
         db.session.commit()

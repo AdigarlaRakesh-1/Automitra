@@ -17,6 +17,7 @@ class Customer(db.Model):
     email = db.Column(db.String(120), nullable=True)
     address = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
     vehicles = db.relationship('Vehicle', backref='customer', cascade='all, delete-orphan', lazy=True)
@@ -78,6 +79,9 @@ class Vehicle(db.Model):
 # ---------------------------------------------------------------------
 class Mechanic(db.Model):
     __tablename__ = 'Mechanics'
+    __table_args__ = (
+        db.CheckConstraint("status IN ('Available', 'Busy', 'On Leave')", name='check_mechanic_status'),
+    )
     
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     name = db.Column(db.String(120), nullable=False)
@@ -103,6 +107,9 @@ class Mechanic(db.Model):
 # ---------------------------------------------------------------------
 class ServiceBooking(db.Model):
     __tablename__ = 'ServiceBookings'
+    __table_args__ = (
+        db.CheckConstraint("status IN ('Pending', 'Confirmed', 'In Progress', 'Completed', 'Cancelled', 'Missed')", name='check_booking_status'),
+    )
     
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     booking_number = db.Column(db.String(40), nullable=False, unique=True)
@@ -136,9 +143,12 @@ class ServiceBooking(db.Model):
 # ---------------------------------------------------------------------
 class ServiceDetail(db.Model):
     __tablename__ = 'ServiceDetails'
+    __table_args__ = (
+        db.CheckConstraint("status IN ('Assigned', 'In Progress', 'Awaiting Parts', 'Completed')", name='check_detail_status'),
+    )
     
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    booking_id = db.Column(db.Integer, db.ForeignKey('ServiceBookings.id', ondelete='CASCADE'), nullable=False)
+    booking_id = db.Column(db.Integer, db.ForeignKey('ServiceBookings.id', ondelete='CASCADE'), nullable=False, unique=True)
     mechanic_id = db.Column(db.Integer, db.ForeignKey('Mechanics.id', ondelete='SET NULL'), nullable=True)
     job_description = db.Column(db.Text, nullable=False)
     diagnosis = db.Column(db.Text, nullable=True)
@@ -230,6 +240,7 @@ class Bill(db.Model):
         db.CheckConstraint('labor_total >= 0', name='check_bill_labor_total_non_negative'),
         db.CheckConstraint('tax_amount >= 0', name='check_bill_tax_amount_non_negative'),
         db.CheckConstraint('discount_amount >= 0', name='check_bill_discount_amount_non_negative'),
+        db.CheckConstraint("payment_status IN ('Unpaid', 'Partially Paid', 'Paid')", name='check_bill_payment_status'),
     )
     
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
@@ -278,6 +289,7 @@ class Payment(db.Model):
     __tablename__ = 'Payments'
     __table_args__ = (
         db.CheckConstraint('amount > 0', name='check_payment_amount_positive'),
+        db.CheckConstraint("payment_method IN ('Cash', 'Credit Card', 'Debit Card', 'UPI / Online', 'Bank Transfer')", name='check_payment_method'),
     )
     
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)

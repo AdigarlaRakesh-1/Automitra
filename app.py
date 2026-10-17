@@ -84,11 +84,13 @@ def create_app(config_class=Config):
     def internal_server_error(e):
         return render_template('500.html', error=str(e)), 500
 
-    # Auto create tables and seed if empty
-    with app.app_context():
-        db.create_all()
-        from seed_data import seed_database
-        seed_database()
+    # Auto create tables and seed only if explicitly configured
+    if app.config.get('AUTO_CREATE_TABLES'):
+        with app.app_context():
+            db.create_all()
+            if app.config.get('AUTO_SEED'):
+                from seed_data import seed_database
+                seed_database()
 
     return app
 
@@ -97,4 +99,6 @@ app = create_app()
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print(f"Starting AutoMitra Web Application on http://127.0.0.1:{port}")
+    with app.app_context():
+        db.create_all()
     app.run(host='0.0.0.0', port=port, debug=True)

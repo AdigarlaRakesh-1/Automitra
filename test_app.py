@@ -485,3 +485,66 @@ def test_valid_deletion_of_disposable_unreferenced_records(client):
     assert res_c.status_code == 200
     assert b"deleted" in res_c.data
     assert db.session.get(Customer, c_id) is None
+
+def test_orm_metadata_and_updated_at(client):
+    """Verify Customer model includes updated_at column matching schema."""
+    assert hasattr(Customer, 'updated_at')
+    customer = Customer.query.first()
+    assert customer is not None
+    assert hasattr(customer, 'updated_at')
+
+def test_status_and_method_check_constraints(client):
+    """Verify database check constraints reject invalid status and payment methods."""
+    from sqlalchemy.exc import IntegrityError
+
+    # Invalid Mechanic status
+    m_bad = Mechanic(name="Bad Status Mech", phone="+91 99999 22222", status="InvalidStatus")
+    db.session.add(m_bad)
+    with pytest.raises(IntegrityError):
+        db.session.commit()
+    db.session.rollback()
+
+    # Invalid ServiceBooking status
+    c = Customer.query.first()
+    v = Vehicle.query.filter_by(customer_id=c.id).first()
+    b_bad = ServiceBooking(
+        booking_number="BK-TEST-BADSTATUS",
+        customer_id=c.id,
+        vehicle_id=v.id,
+        booking_date=date.today(),
+        booking_time="10:00 AM",
+        service_type="General",
+        status="Exploded"
+    )
+    db.session.add(b_bad)
+    with pytest.raises(IntegrityError):
+        db.session.commit()
+    db.session.rollback()
+
+    # Invalid Payment method
+    bill = Bill.query.first()
+    p_bad = Payment(
+        bill_id=bill.id,
+        amount=Decimal('100.00'),
+        payment_method="BitcoinCrypto"
+    )
+    db.session.add(p_bad)
+    with pytest.raises(IntegrityError):
+        db.session.commit()
+    db.session.rollback()
+
+def test_service_detail_unique_booking_constraint(client):
+    """Verify ServiceDetail enforces one-to-one constraint with ServiceBooking."""
+    from sqlalchemy.exc import IntegrityError
+    existing_detail = ServiceDetail.query.first()
+    assert existing_detail is not None
+
+    duplicate_detail = ServiceDetail(
+        booking_id=existing_detail.booking_id,
+        job_description="Duplicate job for same booking",
+        status="Assigned"
+    )
+    db.session.add(duplicate_detail)
+    with pytest.raises(IntegrityError):
+        db.session.commit()
+    db.session.rollback()

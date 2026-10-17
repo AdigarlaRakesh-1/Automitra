@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+
+{% block title %}Payments Ledger & Settlement{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="28" height="28" style="color:var(--primary);"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg>
+      Payments Transaction Ledger
+    </h1>
+    <div class="page-subtitle">Track every payment collected, reconcile invoices, and review payment methods.</div>
+  </div>
+
+  <div style="display:flex; gap:10px;">
+    <a href="{{ url_for('billing.index') }}" class="btn btn-secondary btn-sm">&larr; Invoices Ledger</a>
+  </div>
+</div>
+
+<div class="metrics-grid" style="margin-bottom:24px;">
+  <div class="stat-card" style="--card-accent:#10B981;">
+    <div class="stat-label">Total Revenue Collected</div>
+    <div class="stat-value" style="color:var(--accent-emerald);">{{ total_received | currency }}</div>
+    <div class="stat-footer">{{ payments|length }} transactions recorded</div>
+  </div>
+</div>
+
+<!-- Payment Method Filter -->
+<div class="card" style="margin-bottom: 20px;">
+  <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+    <span style="font-size:13px; font-weight:600; color:var(--text-dim);">Payment Method:</span>
+    <a href="{{ url_for('payments.index') }}" class="btn btn-sm {% if not method_filter %}btn-primary{% else %}btn-secondary{% endif %}">All Methods</a>
+    {% for method in ['Cash', 'Credit Card', 'Debit Card', 'UPI / Online', 'Bank Transfer'] %}
+      <a href="{{ url_for('payments.index', method=method) }}" class="btn btn-sm {% if method_filter == method %}btn-primary{% else %}btn-secondary{% endif %}">{{ method }}</a>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Payment ID</th>
+          <th>Date & Time</th>
+          <th>Invoice #</th>
+          <th>Customer</th>
+          <th>Vehicle</th>
+          <th>Payment Method</th>
+          <th>Transaction Ref</th>
+          <th>Amount Received</th>
+          <th>Receipt</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for pay in payments %}
+        <tr>
+          <td style="font-family:var(--font-mono); font-weight:700; color:var(--accent-cyan);">
+            PAY-#{{ pay.id }}
+          </td>
+          <td>
+            <div style="font-weight:600;">{{ pay.payment_date | format_date }}</div>
+            <div style="font-size:11px; color:var(--text-dim);">{{ pay.payment_date.strftime('%I:%M %p') }}</div>
+          </td>
+          <td style="font-family:var(--font-mono); font-weight:700;">
+            <a href="{{ url_for('billing.view_invoice', bill_id=pay.bill_id) }}">
+              {{ pay.bill.invoice_number }}
+            </a>
+          </td>
+          <td>
+            <a href="{{ url_for('customers.view_customer', customer_id=pay.bill.customer_id) }}" style="font-weight:600;">
+              {{ pay.bill.customer.name }}
+            </a>
+          </td>
+          <td>
+            <div style="font-size:13px;">{{ pay.bill.booking.vehicle.make }} {{ pay.bill.booking.vehicle.model }}</div>
+            <div style="font-size:11px; font-family:var(--font-mono); color:var(--text-dim);">{{ pay.bill.booking.vehicle.license_plate }}</div>
+          </td>
+          <td>
+            <span class="badge badge-purple">{{ pay.payment_method }}</span>
+          </td>
+          <td style="font-family:var(--font-mono); font-size:12px; color:var(--text-dim);">
+            {{ pay.transaction_reference or '—' }}
+          </td>
+          <td style="font-weight:800; color:var(--accent-emerald); font-size:15px;">
+            {{ pay.amount | currency }}
+          </td>
+          <td>
+            <a href="{{ url_for('payments.view_receipt', payment_id=pay.id) }}" class="btn btn-secondary btn-sm" id="btn-print-receipt-{{ pay.id }}">
+              Print Receipt
+            </a>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="9" style="text-align:center; padding:32px; color:var(--text-muted);">
+            No payments recorded matching the filter.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

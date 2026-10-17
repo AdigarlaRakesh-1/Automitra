@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+
+{% block title %}Page Not Found{% endblock %}
+
+{% block content %}
+<div style="text-align:center; padding: 80px 20px;">
+  <div style="font-size: 72px; font-weight: 800; color: var(--primary); margin-bottom: 12px;">404</div>
+  <h2 style="margin-bottom: 8px;">Resource Not Found</h2>
+  <p style="color: var(--text-muted); margin-bottom: 24px;">The garage record, vehicle, or job you requested does not exist or has been moved.</p>
+  <a href="{{ url_for('main.dashboard') }}" class="btn btn-primary">Back to Dashboard</a>
+</div>
+{% endblock %}

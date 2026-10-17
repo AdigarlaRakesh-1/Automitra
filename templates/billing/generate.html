@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+
+{% block title %}Generate Invoice for {{ booking.booking_number }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Generate Service Invoice</h1>
+    <div class="page-subtitle">Compile parts and labor charges into a formalized customer bill.</div>
+  </div>
+  <div>
+    <a href="{{ url_for('bookings.view_booking', booking_id=booking.id) }}" class="btn btn-secondary btn-sm">&larr; Back to Booking</a>
+  </div>
+</div>
+
+<div class="card" style="max-width: 760px; margin: 0 auto;">
+  <div style="background:var(--bg-input); padding:16px; border-radius:var(--radius-md); border:1px solid var(--border-subtle); margin-bottom:20px;">
+    <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+      <div>
+        <div style="font-size:12px; color:var(--text-dim); text-transform:uppercase;">Customer & Vehicle:</div>
+        <div style="font-size:16px; font-weight:700; color:var(--text-main);">{{ booking.customer.name }}</div>
+        <div style="font-size:13px; color:var(--text-muted);">{{ booking.vehicle.make }} {{ booking.vehicle.model }} ({{ booking.vehicle.license_plate }})</div>
+      </div>
+      <div>
+        <div style="font-size:12px; color:var(--text-dim); text-transform:uppercase;">Booking Order:</div>
+        <div style="font-size:15px; font-weight:700; font-family:var(--font-mono); color:var(--accent-cyan);">{{ booking.booking_number }}</div>
+        <div style="font-size:13px; color:var(--text-muted);">{{ booking.booking_date | format_date }}</div>
+      </div>
+    </div>
+  </div>
+
+  <form method="POST">
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label" for="bill-labor-total">Labor Total (₹) *</label>
+        <input type="number" step="0.01" min="0" class="form-control" id="bill-labor-total" name="labor_total" required value="{{ labor_total }}" oninput="calculateGrandTotal()">
+        <small style="font-size:11.5px; color:var(--text-dim);">Auto-populated from assigned technician labor hours.</small>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="bill-parts-total">Spare Parts Subtotal (₹) *</label>
+        <input type="number" step="0.01" min="0" class="form-control" id="bill-parts-total" name="parts_total" required value="{{ parts_total }}" oninput="calculateGrandTotal()">
+        <small style="font-size:11.5px; color:var(--text-dim);">Auto-populated from spare parts deducted during service.</small>
+      </div>
+    </div>
+
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label" for="bill-tax-rate">Tax Rate (%)</label>
+        <input type="number" step="0.1" min="0" max="100" class="form-control" id="bill-tax-rate" name="tax_rate" value="8.0" oninput="calculateGrandTotal()">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="bill-discount">Discount Amount (₹)</label>
+        <input type="number" step="0.01" min="0" class="form-control" id="bill-discount" name="discount_amount" value="0.00" oninput="calculateGrandTotal()">
+      </div>
+    </div>
+
+    <!-- Live Grand Total Preview -->
+    <div style="background:rgba(59, 130, 246, 0.1); border:1px solid rgba(59, 130, 246, 0.3); border-radius:var(--radius-md); padding:16px; margin-top:16px;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <div style="font-size:13px; color:var(--text-muted);">Estimated Invoice Total (Labor + Parts + Tax - Discount):</div>
+          <div style="font-size:28px; font-weight:800; color:var(--text-main);" id="live-grand-total">
+            ₹0.00
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary" id="btn-create-invoice">
+          Issue Invoice
+        </button>
+      </div>
+    </div>
+  </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function calculateGrandTotal() {
+    const labor = parseFloat(document.getElementById('bill-labor-total').value) || 0;
+    const parts = parseFloat(document.getElementById('bill-parts-total').value) || 0;
+    const taxRate = parseFloat(document.getElementById('bill-tax-rate').value) || 0;
+    const discount = parseFloat(document.getElementById('bill-discount').value) || 0;
+
+    const subtotal = labor + parts;
+    const tax = subtotal * (taxRate / 100);
+    const grand = Math.max(0, subtotal + tax - discount);
+
+    document.getElementById('live-grand-total').textContent = `₹${grand.toFixed(2)}`;
+  }
+  calculateGrandTotal();
+</script>
+{% endblock %}

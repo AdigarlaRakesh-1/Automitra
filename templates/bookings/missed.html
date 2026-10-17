@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+
+{% block title %}Missed Bookings Follow-Up Center{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="28" height="28" style="color:var(--accent-rose);"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+      Missed Bookings Resolution Center
+    </h1>
+    <div class="page-subtitle">Proactively track and recover missed appointments to prevent customer churn and loss of revenue.</div>
+  </div>
+
+  <div style="display:flex; gap:10px;">
+    <a href="{{ url_for('bookings.index') }}" class="btn btn-secondary btn-sm">&larr; All Bookings</a>
+    <a href="{{ url_for('bookings.new_booking') }}" class="btn btn-primary btn-sm">+ New Booking</a>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom: 24px; background: rgba(239, 68, 68, 0.08); border-color: rgba(239, 68, 68, 0.25);">
+  <div style="display:flex; align-items:center; gap:14px;">
+    <div style="font-size:24px;">⚠️</div>
+    <div>
+      <div style="font-weight:700; color:#FCA5A5;">{{ missed_bookings|length }} Missed Appointments Require Attention</div>
+      <div style="font-size:13px; color:var(--text-muted);">
+        The scheduled appointment date has elapsed for the following customers without vehicle check-in. Use the reschedule action below to assign a new appointment slot.
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  {% if missed_bookings %}
+    <div class="table-responsive">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Booking #</th>
+            <th>Original Schedule</th>
+            <th>Customer Name</th>
+            <th>Phone Contact</th>
+            <th>Vehicle</th>
+            <th>Service Type</th>
+            <th>Reschedule Slot</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for b in missed_bookings %}
+          <tr>
+            <td style="font-family:var(--font-mono); font-weight:700;">
+              <a href="{{ url_for('bookings.view_booking', booking_id=b.id) }}" style="color:var(--accent-rose);">
+                {{ b.booking_number }}
+              </a>
+            </td>
+            <td>
+              <div style="font-weight:700; color:#F87171;">{{ b.booking_date | format_date }}</div>
+              <div style="font-size:12px; color:var(--text-dim);">{{ b.booking_time }}</div>
+            </td>
+            <td>
+              <a href="{{ url_for('customers.view_customer', customer_id=b.customer_id) }}" style="font-weight:600;">
+                {{ b.customer.name }}
+              </a>
+            </td>
+            <td>
+              <a href="tel:{{ b.customer.phone }}" style="font-family:var(--font-mono); font-weight:700; color:var(--accent-cyan);">
+                📞 {{ b.customer.phone }}
+              </a>
+            </td>
+            <td>
+              <div style="font-weight:600;">{{ b.vehicle.make }} {{ b.vehicle.model }}</div>
+              <div style="font-size:12px; font-family:var(--font-mono); color:var(--text-dim);">{{ b.vehicle.license_plate }}</div>
+            </td>
+            <td style="max-width:180px; font-size:13px;">{{ b.service_type }}</td>
+            <td>
+              <!-- Inline Quick Reschedule Form -->
+              <form action="{{ url_for('bookings.reschedule', booking_id=b.id) }}" method="POST" style="display:flex; gap:6px; align-items:center;">
+                <input type="date" name="reschedule_date" required class="form-control" style="width:130px; font-size:11.5px; padding:4px 8px;" min="{{ today }}">
+                <select name="reschedule_time" required class="form-control" style="width:105px; font-size:11.5px; padding:4px 6px;">
+                  <option value="09:00 AM">09:00 AM</option>
+                  <option value="10:30 AM">10:30 AM</option>
+                  <option value="11:30 AM">11:30 AM</option>
+                  <option value="02:00 PM">02:00 PM</option>
+                  <option value="03:30 PM">03:30 PM</option>
+                  <option value="04:30 PM">04:30 PM</option>
+                </select>
+                <button type="submit" class="btn btn-primary btn-sm" id="btn-quick-reschedule-{{ b.id }}" title="Confirm new date and time">
+                  Reschedule
+                </button>
+              </form>
+            </td>
+            <td>
+              <form action="{{ url_for('bookings.update_status', booking_id=b.id) }}" method="POST" style="display:inline-block;">
+                <input type="hidden" name="status" value="Cancelled">
+                <button type="submit" class="btn btn-secondary btn-sm" onclick="return confirm('Cancel this missed booking?')">
+                  Cancel
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div style="padding:40px; text-align:center;">
+      <div style="font-size:42px; margin-bottom:8px;">🎉</div>
+      <h3 style="font-weight:700; margin-bottom:4px;">No Missed Bookings!</h3>
+      <p style="color:var(--text-muted); font-size:14px;">All scheduled appointments have been attended or are on track for upcoming dates.</p>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

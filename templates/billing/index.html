@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+
+{% block title %}Billing & Invoices{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="28" height="28" style="color:var(--primary);"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+      Invoices & Billing Ledger
+    </h1>
+    <div class="page-subtitle">Track service invoices, calculate labor and parts totals, and monitor accounts receivable.</div>
+  </div>
+
+  <div style="display:flex; gap:10px;">
+    <a href="{{ url_for('payments.index') }}" class="btn btn-secondary btn-sm">Payments Ledger &rarr;</a>
+    <a href="{{ url_for('bookings.index') }}" class="btn btn-primary btn-sm">+ Invoice from Booking</a>
+  </div>
+</div>
+
+<!-- Financial Summary Cards -->
+<div class="metrics-grid" style="margin-bottom:24px;">
+  <div class="stat-card" style="--card-accent:#3B82F6;">
+    <div class="stat-label">Total Invoiced Volume</div>
+    <div class="stat-value">{{ total_invoiced | currency }}</div>
+    <div class="stat-footer">{{ bills|length }} invoices generated</div>
+  </div>
+
+  <div class="stat-card" style="--card-accent:#F59E0B;">
+    <div class="stat-label">Outstanding Balance Due</div>
+    <div class="stat-value" style="color:#FBBF24;">{{ total_unpaid | currency }}</div>
+    <div class="stat-footer">Unpaid and partial balances</div>
+  </div>
+</div>
+
+<!-- Filters -->
+<div class="card" style="margin-bottom: 20px;">
+  <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+    <span style="font-size:13px; font-weight:600; color:var(--text-dim);">Payment Status:</span>
+    <a href="{{ url_for('billing.index') }}" class="btn btn-sm {% if not status_filter %}btn-primary{% else %}btn-secondary{% endif %}">All</a>
+    <a href="{{ url_for('billing.index', status='Unpaid') }}" class="btn btn-sm {% if status_filter == 'Unpaid' %}btn-danger{% else %}btn-secondary{% endif %}">Unpaid</a>
+    <a href="{{ url_for('billing.index', status='Partially Paid') }}" class="btn btn-sm {% if status_filter == 'Partially Paid' %}btn-warning{% else %}btn-secondary{% endif %}">Partially Paid</a>
+    <a href="{{ url_for('billing.index', status='Paid') }}" class="btn btn-sm {% if status_filter == 'Paid' %}btn-success{% else %}btn-secondary{% endif %}">Fully Paid</a>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Invoice #</th>
+          <th>Customer</th>
+          <th>Vehicle</th>
+          <th>Labor</th>
+          <th>Parts</th>
+          <th>Grand Total</th>
+          <th>Balance Due</th>
+          <th>Status</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for b in bills %}
+        <tr>
+          <td style="font-family:var(--font-mono); font-weight:700;">
+            <a href="{{ url_for('billing.view_invoice', bill_id=b.id) }}" style="color:var(--accent-cyan);">
+              {{ b.invoice_number }}
+            </a>
+          </td>
+          <td>
+            <a href="{{ url_for('customers.view_customer', customer_id=b.customer_id) }}" style="font-weight:600;">
+              {{ b.customer.name }}
+            </a>
+          </td>
+          <td>
+            <span style="font-size:13px;">{{ b.booking.vehicle.make }} {{ b.booking.vehicle.model }}</span>
+            <div style="font-size:11px; font-family:var(--font-mono); color:var(--text-dim);">{{ b.booking.vehicle.license_plate }}</div>
+          </td>
+          <td>{{ b.labor_total | currency }}</td>
+          <td>{{ b.parts_total | currency }}</td>
+          <td style="font-weight:700; color:var(--text-main);">
+            {{ b.grand_total | currency }}
+          </td>
+          <td style="font-weight:700; color:{% if b.balance_due > 0 %}#F87171{% else %}var(--accent-emerald){% endif %};">
+            {{ b.balance_due | currency }}
+          </td>
+          <td>
+            {% if b.payment_status == 'Paid' %}
+              <span class="badge badge-success"><span class="badge-dot"></span> Paid</span>
+            {% elif b.payment_status == 'Partially Paid' %}
+              <span class="badge badge-warning"><span class="badge-dot"></span> Partially Paid</span>
+            {% else %}
+              <span class="badge badge-danger"><span class="badge-dot"></span> Unpaid</span>
+            {% endif %}
+          </td>
+          <td>
+            <a href="{{ url_for('billing.view_invoice', bill_id=b.id) }}" class="btn btn-secondary btn-sm" id="btn-view-invoice-{{ b.id }}">
+              View / Pay &rarr;
+            </a>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="9" style="text-align:center; padding:32px; color:var(--text-muted);">
+            No bills found. Invoices can be generated from workshop bookings and completed service jobs.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

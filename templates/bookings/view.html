@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+
+{% block title %}Booking {{ booking.booking_number }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div style="display:flex; align-items:center; gap:12px;">
+      <h1 class="page-title">{{ booking.booking_number }}</h1>
+      {% if booking.status == 'Completed' %}
+        <span class="badge badge-success"><span class="badge-dot"></span> Completed</span>
+      {% elif booking.status == 'In Progress' %}
+        <span class="badge badge-primary"><span class="badge-dot"></span> In Progress</span>
+      {% elif booking.status == 'Confirmed' %}
+        <span class="badge badge-purple"><span class="badge-dot"></span> Confirmed</span>
+      {% elif booking.status == 'Missed' or booking.is_missed %}
+        <span class="badge badge-danger"><span class="badge-dot"></span> Missed</span>
+      {% else %}
+        <span class="badge badge-warning"><span class="badge-dot"></span> {{ booking.status }}</span>
+      {% endif %}
+    </div>
+    <div class="page-subtitle">Scheduled on {{ booking.booking_date | format_date }} at {{ booking.booking_time }}</div>
+  </div>
+
+  <div style="display:flex; gap:10px;">
+    {% if booking.service_detail %}
+      <a href="{{ url_for('services.view_job', detail_id=booking.service_detail.id) }}" class="btn btn-primary btn-sm" id="btn-open-job-card">
+        Open Job Card &rarr;
+      </a>
+    {% endif %}
+
+    {% if not booking.bill %}
+      <a href="{{ url_for('billing.generate_bill', booking_id=booking.id) }}" class="btn btn-success btn-sm" id="btn-generate-bill">
+        Generate Invoice
+      </a>
+    {% else %}
+      <a href="{{ url_for('billing.view_invoice', bill_id=booking.bill.id) }}" class="btn btn-secondary btn-sm" id="btn-view-invoice">
+        View Invoice ({{ booking.bill.invoice_number }})
+      </a>
+    {% endif %}
+  </div>
+</div>
+
+<div style="display:grid; grid-template-columns: 2fr 1fr; gap:24px;">
+  <!-- Left column: Booking & Vehicle Details -->
+  <div style="display:flex; flex-direction:column; gap:24px;">
+    <!-- Overview Card -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Booking Details</div>
+        <div style="font-size:12px; color:var(--text-dim);">Created {{ booking.created_at | format_date }}</div>
+      </div>
+
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-bottom:16px;">
+        <div>
+          <div style="font-size:12px; color:var(--text-dim); text-transform:uppercase;">Customer</div>
+          <div style="font-size:16px; font-weight:700; margin-top:2px;">
+            <a href="{{ url_for('customers.view_customer', customer_id=booking.customer_id) }}">
+              {{ booking.customer.name }}
+            </a>
+          </div>
+          <div style="font-size:13px; color:var(--text-muted); font-family:var(--font-mono);">{{ booking.customer.phone }}</div>
+        </div>
+
+        <div>
+          <div style="font-size:12px; color:var(--text-dim); text-transform:uppercase;">Vehicle</div>
+          <div style="font-size:16px; font-weight:700; margin-top:2px;">
+            <a href="{{ url_for('vehicles.view_vehicle', vehicle_id=booking.vehicle_id) }}">
+              {{ booking.vehicle.year }} {{ booking.vehicle.make }} {{ booking.vehicle.model }}
+            </a>
+          </div>
+          <div style="font-size:13px; color:var(--accent-cyan); font-family:var(--font-mono);">
+            Plate: {{ booking.vehicle.license_plate }}
+          </div>
+        </div>
+      </div>
+
+      <div style="background:var(--bg-input); padding:14px; border-radius:var(--radius-md); border:1px solid var(--border-subtle); margin-bottom:16px;">
+        <div style="font-size:12px; font-weight:700; color:var(--text-dim); text-transform:uppercase; margin-bottom:4px;">
+          Service Requirement:
+        </div>
+        <div style="font-size:15px; font-weight:600; color:var(--text-main);">
+          {{ booking.service_type }}
+        </div>
+        {% if booking.notes %}
+          <div style="font-size:13px; color:var(--text-muted); margin-top:6px; border-top:1px dashed var(--border-subtle); padding-top:6px;">
+            Notes: {{ booking.notes }}
+          </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Job Details Section (ServiceDetails table) -->
+    {% if booking.service_detail %}
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Workshop Job Order (#{{ booking.service_detail.id }})</div>
+        <span class="badge badge-purple">{{ booking.service_detail.status }}</span>
+      </div>
+
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-bottom:14px;">
+        <div>
+          <div style="font-size:12px; color:var(--text-dim);">Assigned Mechanic:</div>
+          <div style="font-weight:700; font-size:14px; margin-top:2px;">
+            {% if booking.service_detail.mechanic %}
+              <a href="{{ url_for('mechanics.view_mechanic', mechanic_id=booking.service_detail.mechanic_id) }}">
+                {{ booking.service_detail.mechanic.name }}
+              </a>
+              <span style="font-size:12px; color:var(--text-dim);">({{ booking.service_detail.mechanic.specialty }})</span>
+            {% else %}
+              <span style="color:var(--accent-amber);">Unassigned</span>
+            {% endif %}
+          </div>
+        </div>
+
+        <div>
+          <div style="font-size:12px; color:var(--text-dim);">Labor Charge:</div>
+          <div style="font-weight:700; font-size:14px; margin-top:2px;">
+            {{ booking.service_detail.labor_cost | currency }} ({{ booking.service_detail.labor_hours }} hrs)
+          </div>
+        </div>
+      </div>
+
+      <div style="font-size:13px; color:var(--text-main); margin-bottom:12px;">
+        <strong>Job Scope:</strong> {{ booking.service_detail.job_description }}
+      </div>
+
+      {% if booking.service_detail.diagnosis %}
+        <div style="font-size:13px; color:var(--text-muted); margin-bottom:14px; font-style:italic;">
+          <strong>Diagnosis:</strong> {{ booking.service_detail.diagnosis }}
+        </div>
+      {% endif %}
+
+      <div style="display:flex; justify-content:flex-end;">
+        <a href="{{ url_for('services.view_job', detail_id=booking.service_detail.id) }}" class="btn btn-secondary btn-sm">
+          Edit Job & Add Spare Parts &rarr;
+        </a>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Right column: Workflow Status Actions -->
+  <div style="display:flex; flex-direction:column; gap:20px;">
+    <!-- Workflow Controller -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Workflow Action</div>
+      </div>
+
+      <form action="{{ url_for('bookings.update_status', booking_id=booking.id) }}" method="POST" style="margin-bottom:16px;">
+        <label class="form-label">Update Booking Status:</label>
+        <div style="display:flex; gap:8px;">
+          <select name="status" class="form-control">
+            <option value="Confirmed" {% if booking.status == 'Confirmed' %}selected{% endif %}>Confirmed</option>
+            <option value="In Progress" {% if booking.status == 'In Progress' %}selected{% endif %}>In Progress</option>
+            <option value="Completed" {% if booking.status == 'Completed' %}selected{% endif %}>Completed</option>
+            <option value="Missed" {% if booking.status == 'Missed' %}selected{% endif %}>Missed</option>
+            <option value="Cancelled" {% if booking.status == 'Cancelled' %}selected{% endif %}>Cancelled</option>
+          </select>
+          <button type="submit" class="btn btn-primary btn-sm">Update</button>
+        </div>
+      </form>
+
+      <!-- Reschedule Action -->
+      <div style="border-top:1px solid var(--border-subtle); padding-top:14px;">
+        <label class="form-label" style="margin-bottom:8px;">Reschedule Appointment:</label>
+        <form action="{{ url_for('bookings.reschedule', booking_id=booking.id) }}" method="POST" style="display:flex; flex-direction:column; gap:8px;">
+          <input type="date" name="reschedule_date" required class="form-control">
+          <select name="reschedule_time" required class="form-control">
+            <option value="09:00 AM">09:00 AM</option>
+            <option value="10:30 AM">10:30 AM</option>
+            <option value="01:30 PM">01:30 PM</option>
+            <option value="03:00 PM">03:00 PM</option>
+            <option value="04:30 PM">04:30 PM</option>
+          </select>
+          <button type="submit" class="btn btn-secondary btn-sm" id="btn-reschedule-booking">
+            Save Rescheduled Time
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

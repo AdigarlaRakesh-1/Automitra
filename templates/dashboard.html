@@ -1,0 +1,327 @@
+{% extends "base.html" %}
+
+{% block title %}Workshop Command Center{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="28" height="28" style="color:var(--primary);"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+      Workshop Command Center
+    </h1>
+    <div class="page-subtitle">Real-time telemetry for customers, bookings, mechanic bays, inventory, and revenue.</div>
+  </div>
+
+  <div style="display:flex; gap:10px;">
+    <a href="{{ url_for('bookings.missed') }}" class="btn btn-secondary btn-sm" id="btn-view-missed-header">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="16" height="16"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+      Missed Bookings ({{ missed_bookings_count }})
+    </a>
+    <a href="{{ url_for('bookings.new_booking') }}" class="btn btn-primary btn-sm" id="btn-book-service-header">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+      Schedule Booking
+    </a>
+  </div>
+</div>
+
+<!-- Warning Banner if Missed Bookings Exist -->
+{% if missed_bookings_count > 0 %}
+<div class="card" style="background: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.35); margin-bottom: 24px;">
+  <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:14px;">
+    <div style="display:flex; align-items:center; gap:14px;">
+      <div style="width:40px; height:40px; border-radius:50%; background:rgba(239, 68, 68, 0.2); display:flex; align-items:center; justify-content:center; color:#F87171;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="22" height="22"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+      </div>
+      <div>
+        <div style="font-weight:700; color:#FCA5A5; font-size:15px;">Attention: {{ missed_bookings_count }} Missed or Overdue Bookings Detected</div>
+        <div style="font-size:13px; color:var(--text-muted);">Customers who missed their scheduled appointment slots require proactive follow-up or rescheduling.</div>
+      </div>
+    </div>
+    <a href="{{ url_for('bookings.missed') }}" class="btn btn-danger btn-sm" id="btn-resolve-missed-banner">
+      Resolve Missed Bookings &rarr;
+    </a>
+  </div>
+</div>
+{% endif %}
+
+<!-- Key Metrics Grid -->
+<div class="metrics-grid">
+  <!-- Active Jobs -->
+  <div class="stat-card" style="--card-accent: #3B82F6;">
+    <div class="stat-header">
+      <span class="stat-label">Active Workshop Jobs</span>
+      <div class="stat-icon" style="--stat-icon-bg: rgba(59, 130, 246, 0.15); --stat-icon-color: #60A5FA;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>
+      </div>
+    </div>
+    <div class="stat-value">{{ active_jobs }}</div>
+    <div class="stat-footer">
+      <span>Vehicles currently in service bays</span>
+    </div>
+  </div>
+
+  <!-- Today's Bookings -->
+  <div class="stat-card" style="--card-accent: #06B6D4;">
+    <div class="stat-header">
+      <span class="stat-label">Bookings Today</span>
+      <div class="stat-icon" style="--stat-icon-bg: rgba(6, 182, 212, 0.15); --stat-icon-color: #22D3EE;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+      </div>
+    </div>
+    <div class="stat-value">{{ bookings_today }}</div>
+    <div class="stat-footer">
+      <span>{{ pending_bookings }} pending confirmation</span>
+    </div>
+  </div>
+
+  <!-- Mechanics Available -->
+  <div class="stat-card" style="--card-accent: #10B981;">
+    <div class="stat-header">
+      <span class="stat-label">Mechanics Available</span>
+      <div class="stat-icon" style="--stat-icon-bg: rgba(16, 185, 129, 0.15); --stat-icon-color: #34D399;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+      </div>
+    </div>
+    <div class="stat-value">{{ available_mechanics }} <span style="font-size:16px; font-weight:500; color:var(--text-muted);">/ {{ total_mechanics }}</span></div>
+    <div class="stat-footer">
+      <a href="{{ url_for('mechanics.allocation') }}" style="color:var(--accent-cyan); font-weight:600;">View Bay Allocations &rarr;</a>
+    </div>
+  </div>
+
+  <!-- Low Stock Warning -->
+  <div class="stat-card" style="--card-accent: {% if low_stock_count > 0 %}#F59E0B{% else %}#10B981{% endif %};">
+    <div class="stat-header">
+      <span class="stat-label">Low Stock Parts</span>
+      <div class="stat-icon" style="--stat-icon-bg: rgba(245, 158, 11, 0.15); --stat-icon-color: #FBBF24;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path></svg>
+      </div>
+    </div>
+    <div class="stat-value" style="color: {% if low_stock_count > 0 %}#FBBF24{% else %}var(--text-main){% endif %};">{{ low_stock_count }}</div>
+    <div class="stat-footer">
+      <a href="{{ url_for('inventory.low_stock') }}" style="color:#FBBF24; font-weight:600;">Restock Parts &rarr;</a>
+    </div>
+  </div>
+
+  <!-- Revenue Collected -->
+  <div class="stat-card" style="--card-accent: #8B5CF6;">
+    <div class="stat-header">
+      <span class="stat-label">Total Revenue</span>
+      <div class="stat-icon" style="--stat-icon-bg: rgba(139, 92, 246, 0.15); --stat-icon-color: #A78BFA;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg>
+      </div>
+    </div>
+    <div class="stat-value">{{ total_revenue | currency }}</div>
+    <div class="stat-footer">
+      <span>{{ pending_bills_amount | currency }} outstanding balance</span>
+    </div>
+  </div>
+</div>
+
+<div style="display:grid; grid-template-columns: 2fr 1fr; gap:24px; margin-bottom:24px;">
+  <!-- Recent Bookings Table -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="18" height="18"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line></svg>
+        Recent Service Bookings
+      </div>
+      <a href="{{ url_for('bookings.index') }}" class="btn btn-secondary btn-sm">View All ({{ recent_bookings|length }})</a>
+    </div>
+
+    <div class="table-responsive">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Booking #</th>
+            <th>Customer & Vehicle</th>
+            <th>Date & Time</th>
+            <th>Service Type</th>
+            <th>Status</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for b in recent_bookings %}
+          <tr>
+            <td>
+              <a href="{{ url_for('bookings.view_booking', booking_id=b.id) }}" style="font-family:var(--font-mono); font-weight:700;">
+                {{ b.booking_number }}
+              </a>
+            </td>
+            <td>
+              <div style="font-weight:600;">{{ b.customer.name }}</div>
+              <div style="font-size:12px; color:var(--text-dim);">
+                {{ b.vehicle.make }} {{ b.vehicle.model }} ({{ b.vehicle.license_plate }})
+              </div>
+            </td>
+            <td>
+              <div>{{ b.booking_date | format_date }}</div>
+              <div style="font-size:12px; color:var(--text-dim);">{{ b.booking_time }}</div>
+            </td>
+            <td style="max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+              {{ b.service_type }}
+            </td>
+            <td>
+              {% if b.status == 'Completed' %}
+                <span class="badge badge-success"><span class="badge-dot"></span> Completed</span>
+              {% elif b.status == 'In Progress' %}
+                <span class="badge badge-primary"><span class="badge-dot"></span> In Progress</span>
+              {% elif b.status == 'Confirmed' %}
+                <span class="badge badge-purple"><span class="badge-dot"></span> Confirmed</span>
+              {% elif b.status == 'Missed' %}
+                <span class="badge badge-danger"><span class="badge-dot"></span> Missed</span>
+              {% else %}
+                <span class="badge badge-warning"><span class="badge-dot"></span> {{ b.status }}</span>
+              {% endif %}
+            </td>
+            <td>
+              <a href="{{ url_for('bookings.view_booking', booking_id=b.id) }}" class="btn btn-secondary btn-sm" id="btn-view-booking-{{ b.id }}">
+                Manage
+              </a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Mechanic Workload Widget -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="18" height="18"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle></svg>
+        Mechanic Allocation
+      </div>
+      <a href="{{ url_for('mechanics.allocation') }}" class="btn btn-secondary btn-sm">Full Bay Map</a>
+    </div>
+
+    <div style="display:flex; flex-direction:column; gap:12px;">
+      {% for m in mechanics %}
+      <div style="background:var(--bg-input); padding:12px 14px; border-radius:var(--radius-md); border:1px solid var(--border-subtle); display:flex; align-items:center; justify-content:space-between;">
+        <div>
+          <div style="font-weight:600; font-size:14px;">{{ m.name }}</div>
+          <div style="font-size:12px; color:var(--text-dim);">{{ m.specialty }}</div>
+        </div>
+        <div style="text-align:right;">
+          {% if m.status == 'Available' %}
+            <span class="badge badge-success"><span class="badge-dot"></span> Available</span>
+          {% elif m.status == 'Busy' %}
+            <span class="badge badge-primary"><span class="badge-dot"></span> Active Job</span>
+          {% else %}
+            <span class="badge badge-gray"><span class="badge-dot"></span> {{ m.status }}</span>
+          {% endif %}
+          <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">
+            {{ m.active_jobs_count }} active job(s)
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<!-- Secondary Row: Low Stock Alert & Recent Payments -->
+<div style="display:grid; grid-template-columns: 1fr 1fr; gap:24px;">
+  <!-- Low Stock Parts Alert Table -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title" style="color:{% if low_stock_count > 0 %}#FBBF24{% else %}var(--text-main){% endif %};">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="18" height="18"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path></svg>
+        Low Stock Inventory Alerts
+      </div>
+      <a href="{{ url_for('inventory.low_stock') }}" class="btn btn-secondary btn-sm">All Inventory</a>
+    </div>
+
+    {% if low_stock_parts %}
+      <div class="table-responsive">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Part SKU</th>
+              <th>Name</th>
+              <th>Current Stock</th>
+              <th>Min Reorder</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in low_stock_parts %}
+            <tr>
+              <td style="font-family:var(--font-mono); font-size:12px; color:var(--text-dim);">{{ p.part_number }}</td>
+              <td style="font-weight:600;">{{ p.name }}</td>
+              <td>
+                <span class="badge badge-danger">{{ p.stock_quantity }} in stock</span>
+              </td>
+              <td>{{ p.min_reorder_level }}</td>
+              <td>
+                <form action="{{ url_for('inventory.restock_part', part_id=p.id) }}" method="POST" style="display:inline-flex; gap:6px;">
+                  <input type="hidden" name="quantity" value="10">
+                  <button type="submit" class="btn btn-warning btn-sm" id="btn-quick-restock-{{ p.id }}" title="Restock +10 units">
+                    +10 Restock
+                  </button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div style="padding:24px; text-align:center; color:var(--accent-emerald);">
+        ✓ All spare parts stock levels are healthy!
+      </div>
+    {% endif %}
+  </div>
+
+  <!-- Recent Payments Received -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="18" height="18"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg>
+        Recent Payments & Settlement
+      </div>
+      <a href="{{ url_for('payments.index') }}" class="btn btn-secondary btn-sm">View Ledger</a>
+    </div>
+
+    <div class="table-responsive">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Invoice #</th>
+            <th>Amount</th>
+            <th>Method</th>
+            <th>Date</th>
+            <th>Receipt</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for pay in recent_payments %}
+          <tr>
+            <td style="font-family:var(--font-mono); font-weight:600;">
+              <a href="{{ url_for('billing.view_invoice', bill_id=pay.bill_id) }}">
+                {{ pay.bill.invoice_number }}
+              </a>
+            </td>
+            <td style="font-weight:700; color:var(--accent-emerald);">
+              {{ pay.amount | currency }}
+            </td>
+            <td>
+              <span class="badge badge-gray">{{ pay.payment_method }}</span>
+            </td>
+            <td style="font-size:12px; color:var(--text-dim);">
+              {{ pay.payment_date | format_date }}
+            </td>
+            <td>
+              <a href="{{ url_for('payments.view_receipt', payment_id=pay.id) }}" class="btn btn-secondary btn-sm" id="btn-receipt-{{ pay.id }}">
+                Receipt
+              </a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+
+{% block title %}Spare Parts Inventory{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="28" height="28" style="color:var(--primary);"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+      Spare Parts & Stock Management
+    </h1>
+    <div class="page-subtitle">Manage inventory levels, monitor low-stock reorder thresholds, and automate parts usage tracking.</div>
+  </div>
+
+  <div style="display:flex; gap:10px;">
+    {% if low_stock_count > 0 %}
+      <a href="{{ url_for('inventory.low_stock') }}" class="btn btn-warning btn-sm" id="btn-view-low-stock">
+        ⚠️ Low Stock Alerts ({{ low_stock_count }})
+      </a>
+    {% endif %}
+    <a href="{{ url_for('inventory.new_part') }}" class="btn btn-primary btn-sm" id="btn-add-part">
+      + Add New Spare Part
+    </a>
+  </div>
+</div>
+
+<!-- Search & Filters -->
+<div class="card" style="margin-bottom: 20px;">
+  <form method="GET" action="{{ url_for('inventory.index') }}" style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
+    <input type="text" name="search" class="form-control" style="flex:1; min-width:220px;" placeholder="Search SKU / part number, name, or bin location..." value="{{ search }}">
+    
+    <select name="category" class="form-control" style="width:auto;">
+      <option value="">All Categories</option>
+      {% for cat in categories %}
+        <option value="{{ cat }}" {% if selected_category == cat %}selected{% endif %}>{{ cat }}</option>
+      {% endfor %}
+    </select>
+
+    <select name="status" class="form-control" style="width:auto;">
+      <option value="">All Stock Levels</option>
+      <option value="low" {% if stock_status == 'low' %}selected{% endif %}>Low Stock Only</option>
+      <option value="out" {% if stock_status == 'out' %}selected{% endif %}>Out of Stock (0)</option>
+    </select>
+
+    <button type="submit" class="btn btn-secondary">Filter</button>
+    {% if search or selected_category or stock_status %}
+      <a href="{{ url_for('inventory.index') }}" class="btn btn-secondary">Clear</a>
+    {% endif %}
+  </form>
+</div>
+
+<!-- Spare Parts Table -->
+<div class="card">
+  <div class="table-responsive">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Part SKU</th>
+          <th>Description</th>
+          <th>Category</th>
+          <th>Cost Price</th>
+          <th>Selling Price</th>
+          <th>Stock Quantity</th>
+          <th>Min Reorder</th>
+          <th>Bin Location</th>
+          <th>Quick Restock</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in parts %}
+        <tr {% if p.is_low_stock %}style="background:rgba(245, 158, 11, 0.05);"{% endif %}>
+          <td style="font-family:var(--font-mono); font-weight:700; color:var(--accent-cyan); font-size:13px;">
+            {{ p.part_number }}
+          </td>
+          <td>
+            <div style="font-weight:600;">{{ p.name }}</div>
+          </td>
+          <td>
+            <span class="badge badge-purple">{{ p.category }}</span>
+          </td>
+          <td style="color:var(--text-dim);">{{ p.cost_price | currency }}</td>
+          <td style="font-weight:700; color:var(--text-main);">{{ p.selling_price | currency }}</td>
+          <td>
+            {% if p.stock_quantity == 0 %}
+              <span class="badge badge-danger">Out of Stock (0)</span>
+            {% elif p.is_low_stock %}
+              <span class="badge badge-warning">Low: {{ p.stock_quantity }} units</span>
+            {% else %}
+              <span class="badge badge-success">{{ p.stock_quantity }} in stock</span>
+            {% endif %}
+          </td>
+          <td>{{ p.min_reorder_level }} units</td>
+          <td style="font-family:var(--font-mono); font-size:12px; color:var(--text-dim);">
+            {{ p.location_bin or '—' }}
+          </td>
+          <td>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <form action="{{ url_for('inventory.restock_part', part_id=p.id) }}" method="POST" style="display:flex; gap:4px;">
+                <input type="number" name="quantity" value="5" min="1" class="form-control" style="width:55px; padding:3px 6px; font-size:11.5px; height:auto;">
+                <button type="submit" class="btn btn-secondary btn-sm" style="font-size:11px;" title="Add quantity to inventory">
+                  +Add
+                </button>
+              </form>
+              <a href="{{ url_for('inventory.edit_part', part_id=p.id) }}" class="btn btn-secondary btn-sm" style="font-size:11px;">
+                Edit
+              </a>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="9" style="text-align:center; padding:32px; color:var(--text-muted);">
+            No spare parts found matching the criteria. Click <strong>+ Add New Spare Part</strong> to create one.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

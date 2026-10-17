@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block title %}Server Error{% endblock %}
+
+{% block content %}
+<div style="text-align:center; padding: 80px 20px;">
+  <div style="font-size: 72px; font-weight: 800; color: var(--accent-rose); margin-bottom: 12px;">500</div>
+  <h2 style="margin-bottom: 8px;">Internal Processing Error</h2>
+  <p style="color: var(--text-muted); margin-bottom: 16px;">An unexpected error occurred while communicating with the database or server.</p>
+  {% if error %}
+    <code style="background: rgba(0,0,0,0.4); padding: 8px 14px; border-radius: 6px; display: inline-block; margin-bottom: 24px; color:#F87171;">{{ error }}</code>
+  {% endif %}
+  <div>
+    <a href="{{ url_for('main.dashboard') }}" class="btn btn-primary">Return to Dashboard</a>
+  </div>
+</div>
+{% endblock %}

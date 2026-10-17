@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+
+{% block title %}{{ mechanic.name }} - Staff Profile{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div style="display:flex; align-items:center; gap:12px;">
+      <h1 class="page-title">{{ mechanic.name }}</h1>
+      <span class="badge {% if mechanic.status == 'Available' %}badge-success{% elif mechanic.status == 'Busy' %}badge-primary{% else %}badge-gray{% endif %}">
+        {{ mechanic.status }}
+      </span>
+    </div>
+    <div class="page-subtitle">{{ mechanic.specialty }} &bull; Staff ID #{{ mechanic.id }}</div>
+  </div>
+
+  <div style="display:flex; gap:10px;">
+    <a href="{{ url_for('mechanics.edit_mechanic', mechanic_id=mechanic.id) }}" class="btn btn-secondary btn-sm">
+      Edit Profile
+    </a>
+    <a href="{{ url_for('mechanics.allocation') }}" class="btn btn-primary btn-sm">
+      Bay Allocations
+    </a>
+  </div>
+</div>
+
+<div class="metrics-grid" style="margin-bottom:24px;">
+  <div class="stat-card" style="--card-accent:#3B82F6;">
+    <div class="stat-label">Hourly Labor Rate</div>
+    <div class="stat-value">{{ mechanic.hourly_rate | currency }}<span style="font-size:14px; color:var(--text-dim);">/hr</span></div>
+    <div class="stat-footer">Standard billing rate</div>
+  </div>
+
+  <div class="stat-card" style="--card-accent:#06B6D4;">
+    <div class="stat-label">Contact Phone</div>
+    <div style="font-size:18px; font-weight:700; margin-top:8px; font-family:var(--font-mono);">{{ mechanic.phone }}</div>
+    <div class="stat-footer">Direct workshop contact</div>
+  </div>
+
+  <div class="stat-card" style="--card-accent:#10B981;">
+    <div class="stat-label">Total Jobs Handled</div>
+    <div class="stat-value">{{ assigned_jobs|length }}</div>
+    <div class="stat-footer">Lifetime job orders</div>
+  </div>
+
+  <div class="stat-card" style="--card-accent:#8B5CF6;">
+    <div class="stat-label">Active Jobs in Bay</div>
+    <div class="stat-value">{{ mechanic.active_jobs_count }}</div>
+    <div class="stat-footer">Currently in progress</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <div class="card-title">Assigned Service Jobs & History</div>
+  </div>
+
+  <div class="table-responsive">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Booking #</th>
+          <th>Vehicle & Customer</th>
+          <th>Job Scope</th>
+          <th>Labor Hours</th>
+          <th>Status</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for job in assigned_jobs %}
+        <tr>
+          <td style="font-family:var(--font-mono); font-weight:700;">
+            <a href="{{ url_for('services.view_job', detail_id=job.id) }}">{{ job.booking.booking_number }}</a>
+          </td>
+          <td>
+            <div style="font-weight:600;">{{ job.booking.vehicle.make }} {{ job.booking.vehicle.model }} ({{ job.booking.vehicle.license_plate }})</div>
+            <div style="font-size:12px; color:var(--text-dim);">{{ job.booking.customer.name }}</div>
+          </td>
+          <td style="max-width:240px; font-size:13px;">{{ job.job_description }}</td>
+          <td>{{ job.labor_hours }} hrs ({{ job.labor_cost | currency }})</td>
+          <td>
+            <span class="badge {% if job.status == 'Completed' %}badge-success{% else %}badge-primary{% endif %}">
+              {{ job.status }}
+            </span>
+          </td>
+          <td>
+            <a href="{{ url_for('services.view_job', detail_id=job.id) }}" class="btn btn-secondary btn-sm">
+              Open Job Card
+            </a>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="6" style="text-align:center; padding:24px; color:var(--text-muted);">
+            No jobs recorded for this mechanic yet.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

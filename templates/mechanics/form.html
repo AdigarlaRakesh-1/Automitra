@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block title %}{{ action }} Mechanic{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">{{ action }} Mechanic</h1>
+    <div class="page-subtitle">Configure mechanic skills, hourly rates, and availability for the workshop.</div>
+  </div>
+  <div>
+    <a href="{{ url_for('mechanics.index') }}" class="btn btn-secondary btn-sm">&larr; Back to Mechanics</a>
+  </div>
+</div>
+
+<div class="card" style="max-width: 680px; margin: 0 auto;">
+  <form method="POST">
+    <div class="form-group">
+      <label class="form-label" for="mech-name-input">Full Name *</label>
+      <input type="text" class="form-control" id="mech-name-input" name="name" required placeholder="e.g. Carlos Mendez" value="{{ mechanic.name if mechanic else '' }}">
+    </div>
+
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label" for="mech-phone-input">Phone Number *</label>
+        <input type="tel" class="form-control" id="mech-phone-input" name="phone" required placeholder="e.g. +1 (555) 789-0111" value="{{ mechanic.phone if mechanic else '' }}">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="mech-rate-input">Hourly Labor Rate (₹/hr) *</label>
+        <input type="number" step="0.50" min="0" class="form-control" id="mech-rate-input" name="hourly_rate" required placeholder="e.g. 500.00" value="{{ mechanic.hourly_rate if mechanic else '450.00' }}">
+      </div>
+    </div>
+
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label" for="mech-specialty-input">Primary Specialty / Expertise *</label>
+        <select class="form-control" id="mech-specialty-input" name="specialty">
+          {% for spec in ['Engine & Transmission Diagnostics', 'Brakes, Suspension & Alignment', 'Auto Electrical & Hybrid/EV', 'General Maintenance & AC Systems', 'Tire, Exhaust & Heavy Duty'] %}
+            <option value="{{ spec }}" {% if mechanic and mechanic.specialty == spec %}selected{% endif %}>{{ spec }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="mech-status-input">Current Work Status</label>
+        <select class="form-control" id="mech-status-input" name="status">
+          <option value="Available" {% if mechanic and mechanic.status == 'Available' %}selected{% endif %}>Available</option>
+          <option value="Busy" {% if mechanic and mechanic.status == 'Busy' %}selected{% endif %}>Busy</option>
+          <option value="On Leave" {% if mechanic and mechanic.status == 'On Leave' %}selected{% endif %}>On Leave</option>
+        </select>
+      </div>
+    </div>
+
+    <div style="display:flex; justify-content:flex-end; gap:12px; margin-top:24px;">
+      <a href="{{ url_for('mechanics.index') }}" class="btn btn-secondary">Cancel</a>
+      <button type="submit" class="btn btn-primary" id="btn-save-mechanic">
+        Save Mechanic
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}

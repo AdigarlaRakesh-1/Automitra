@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block title %}Adjust Invoice {{ bill.invoice_number }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Adjust Invoice {{ bill.invoice_number }}</h1>
+    <div class="page-subtitle">Update labor totals, parts totals, taxes, or promotional discounts.</div>
+  </div>
+  <div>
+    <a href="{{ url_for('billing.view_invoice', bill_id=bill.id) }}" class="btn btn-secondary btn-sm">&larr; Back to Invoice</a>
+  </div>
+</div>
+
+<div class="card" style="max-width: 650px; margin: 0 auto;">
+  <form method="POST">
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label" for="edit-labor-total">Labor Total (₹)</label>
+        <input type="number" step="0.01" min="0" class="form-control" id="edit-labor-total" name="labor_total" value="{{ bill.labor_total }}">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="edit-parts-total">Parts Total (₹)</label>
+        <input type="number" step="0.01" min="0" class="form-control" id="edit-parts-total" name="parts_total" value="{{ bill.parts_total }}">
+      </div>
+    </div>
+
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label" for="edit-tax-amount">Tax Amount (₹)</label>
+        <input type="number" step="0.01" min="0" class="form-control" id="edit-tax-amount" name="tax_amount" value="{{ bill.tax_amount }}">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="edit-discount-amount">Discount Amount (₹)</label>
+        <input type="number" step="0.01" min="0" class="form-control" id="edit-discount-amount" name="discount_amount" value="{{ bill.discount_amount }}">
+      </div>
+    </div>
+
+    <div style="display:flex; justify-content:flex-end; gap:12px; margin-top:20px;">
+      <a href="{{ url_for('billing.view_invoice', bill_id=bill.id) }}" class="btn btn-secondary">Cancel</a>
+      <button type="submit" class="btn btn-primary">Save Adjustments</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

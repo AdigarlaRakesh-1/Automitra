@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+
+{% block title %}{{ action }} Vehicle{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">{{ action }} Vehicle</h1>
+    <div class="page-subtitle">Associate vehicles to customers for comprehensive service history logs.</div>
+  </div>
+  <div>
+    <a href="{{ url_for('vehicles.index') }}" class="btn btn-secondary btn-sm">&larr; Back to Vehicles</a>
+  </div>
+</div>
+
+<div class="card" style="max-width: 760px; margin: 0 auto;">
+  <form method="POST">
+    {% if not vehicle %}
+    <div class="form-group">
+      <label class="form-label" for="vehicle-customer-select">Customer Owner *</label>
+      <select class="form-control" id="vehicle-customer-select" name="customer_id" required>
+        <option value="">-- Select Customer --</option>
+        {% for c in customers %}
+          <option value="{{ c.id }}" {% if selected_customer_id == c.id %}selected{% endif %}>
+            {{ c.name }} ({{ c.phone }})
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endif %}
+
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label" for="vehicle-plate-input">License Plate * (Unique)</label>
+        <input type="text" class="form-control" id="vehicle-plate-input" name="license_plate" required placeholder="e.g. 7XYZ901" value="{{ vehicle.license_plate if vehicle else '' }}" style="text-transform:uppercase; font-family:var(--font-mono);">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="vehicle-vin-input">VIN (Vehicle Identification Number)</label>
+        <input type="text" class="form-control" id="vehicle-vin-input" name="vin" placeholder="17-character VIN" value="{{ vehicle.vin if vehicle else '' }}" style="font-family:var(--font-mono);">
+      </div>
+    </div>
+
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label" for="vehicle-make-input">Make *</label>
+        <input type="text" class="form-control" id="vehicle-make-input" name="make" required placeholder="e.g. Toyota" value="{{ vehicle.make if vehicle else '' }}">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="vehicle-model-input">Model *</label>
+        <input type="text" class="form-control" id="vehicle-model-input" name="model" required placeholder="e.g. Camry SE" value="{{ vehicle.model if vehicle else '' }}">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="vehicle-year-input">Year *</label>
+        <input type="number" class="form-control" id="vehicle-year-input" name="year" required min="1950" max="2035" placeholder="e.g. 2021" value="{{ vehicle.year if vehicle else '2021' }}">
+      </div>
+    </div>
+
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label" for="vehicle-mileage-input">Current Mileage (Miles / Km)</label>
+        <input type="number" class="form-control" id="vehicle-mileage-input" name="mileage" min="0" placeholder="e.g. 42000" value="{{ vehicle.mileage if vehicle else '0' }}">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="vehicle-fuel-input">Fuel / Powertrain Type</label>
+        <select class="form-control" id="vehicle-fuel-input" name="fuel_type">
+          {% for ft in ['Petrol', 'Diesel', 'Hybrid', 'Electric', 'Plug-in Hybrid', 'CNG/LPG'] %}
+            <option value="{{ ft }}" {% if vehicle and vehicle.fuel_type == ft %}selected{% endif %}>{{ ft }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="vehicle-color-input">Exterior Color</label>
+        <input type="text" class="form-control" id="vehicle-color-input" name="color" placeholder="e.g. Midnight Black" value="{{ vehicle.color if vehicle else '' }}">
+      </div>
+    </div>
+
+    <div style="display:flex; justify-content:flex-end; gap:12px; margin-top:24px;">
+      <a href="{{ url_for('vehicles.index') }}" class="btn btn-secondary">Cancel</a>
+      <button type="submit" class="btn btn-primary" id="btn-save-vehicle">
+        Save Vehicle
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}

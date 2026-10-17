@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+
+{% block title %}Payment Receipt #{{ payment.id }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Payment Receipt #{{ payment.id }}</h1>
+    <div class="page-subtitle">Official payment acknowledgement for Invoice {{ payment.bill.invoice_number }}</div>
+  </div>
+
+  <div style="display:flex; gap:10px;">
+    <button onclick="window.print()" class="btn btn-secondary btn-sm" id="btn-print-receipt">
+      🖨️ Print Receipt
+    </button>
+    <a href="{{ url_for('billing.view_invoice', bill_id=payment.bill_id) }}" class="btn btn-primary btn-sm">
+      View Full Invoice &rarr;
+    </a>
+  </div>
+</div>
+
+<div class="invoice-container" style="max-width: 600px;">
+  <div style="text-align:center; border-bottom: 2px dashed #CBD5E1; padding-bottom:20px; margin-bottom:20px;">
+    <div class="invoice-brand" style="font-size:22px;">AutoMitra Auto Service</div>
+    <div style="font-size:12px; color:#64748B;">Official Payment Receipt</div>
+    <div style="font-size:11px; color:#94A3B8; margin-top:2px;">Transaction ID: PAY-#{{ payment.id }}</div>
+  </div>
+
+  <div style="display:flex; justify-content:space-between; margin-bottom:12px; font-size:14px;">
+    <span style="color:#64748B;">Date & Time:</span>
+    <strong>{{ payment.payment_date | format_date('%b %d, %Y %I:%M %p') }}</strong>
+  </div>
+
+  <div style="display:flex; justify-content:space-between; margin-bottom:12px; font-size:14px;">
+    <span style="color:#64748B;">Customer:</span>
+    <strong>{{ payment.bill.customer.name }}</strong>
+  </div>
+
+  <div style="display:flex; justify-content:space-between; margin-bottom:12px; font-size:14px;">
+    <span style="color:#64748B;">Vehicle:</span>
+    <strong>{{ payment.bill.booking.vehicle.make }} {{ payment.bill.booking.vehicle.model }} ({{ payment.bill.booking.vehicle.license_plate }})</strong>
+  </div>
+
+  <div style="display:flex; justify-content:space-between; margin-bottom:12px; font-size:14px;">
+    <span style="color:#64748B;">Invoice Number:</span>
+    <strong>{{ payment.bill.invoice_number }}</strong>
+  </div>
+
+  <div style="display:flex; justify-content:space-between; margin-bottom:12px; font-size:14px;">
+    <span style="color:#64748B;">Payment Method:</span>
+    <strong>{{ payment.payment_method }}</strong>
+  </div>
+
+  {% if payment.transaction_reference %}
+  <div style="display:flex; justify-content:space-between; margin-bottom:12px; font-size:14px;">
+    <span style="color:#64748B;">Ref / Auth Code:</span>
+    <span style="font-family:var(--font-mono);">{{ payment.transaction_reference }}</span>
+  </div>
+  {% endif %}
+
+  <div style="background:#F1F5F9; border-radius:var(--radius-md); padding:16px; margin:20px 0; text-align:center;">
+    <div style="font-size:12px; text-transform:uppercase; color:#64748B; font-weight:700;">Amount Paid</div>
+    <div style="font-size:32px; font-weight:800; color:#059669; margin-top:2px;">
+      {{ payment.amount | currency }}
+    </div>
+    <div style="font-size:12px; color:#475569; margin-top:4px;">
+      Remaining Invoice Balance: <strong>{{ payment.bill.balance_due | currency }}</strong>
+    </div>
+  </div>
+
+  <div style="text-align:center; font-size:12px; color:#94A3B8; margin-top:24px;">
+    Thank you for choosing AutoMitra for your automotive service needs!
+  </div>
+</div>
+{% endblock %}

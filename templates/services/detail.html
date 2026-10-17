@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+
+{% block title %}Workshop Job #{{ job.id }} - {{ job.booking.booking_number }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div style="display:flex; align-items:center; gap:12px;">
+      <h1 class="page-title">Job Order #{{ job.id }}</h1>
+      <span class="badge {% if job.status == 'Completed' %}badge-success{% elif job.status == 'In Progress' %}badge-primary{% elif job.status == 'Awaiting Parts' %}badge-danger{% else %}badge-purple{% endif %}">
+        {{ job.status }}
+      </span>
+    </div>
+    <div class="page-subtitle">
+      Linked Booking: <a href="{{ url_for('bookings.view_booking', booking_id=job.booking_id) }}" style="font-family:var(--font-mono); font-weight:700;">{{ job.booking.booking_number }}</a>
+      &bull; {{ job.booking.vehicle.make }} {{ job.booking.vehicle.model }} ({{ job.booking.vehicle.license_plate }})
+    </div>
+  </div>
+
+  <div style="display:flex; gap:10px;">
+    {% if not job.booking.bill %}
+      <a href="{{ url_for('billing.generate_bill', booking_id=job.booking_id) }}" class="btn btn-success btn-sm" id="btn-bill-from-job">
+        Generate Final Bill &rarr;
+      </a>
+    {% else %}
+      <a href="{{ url_for('billing.view_invoice', bill_id=job.booking.bill.id) }}" class="btn btn-secondary btn-sm">
+        View Invoice ({{ job.booking.bill.invoice_number }})
+      </a>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Job Financial Summary -->
+<div class="metrics-grid" style="margin-bottom:24px;">
+  <div class="stat-card" style="--card-accent:#3B82F6;">
+    <div class="stat-label">Labor Cost</div>
+    <div class="stat-value">{{ job.labor_cost | currency }}</div>
+    <div class="stat-footer">{{ job.labor_hours }} billed labor hours</div>
+  </div>
+
+  <div class="stat-card" style="--card-accent:#06B6D4;">
+    <div class="stat-label">Parts Subtotal</div>
+    <div class="stat-value">{{ job.parts_total | currency }}</div>
+    <div class="stat-footer">{{ job.part_usages|length }} item(s) consumed</div>
+  </div>
+
+  <div class="stat-card" style="--card-accent:#10B981;">
+    <div class="stat-label">Total Job Cost</div>
+    <div class="stat-value" style="color:var(--accent-emerald);">{{ job.total_cost | currency }}</div>
+    <div class="stat-footer">Labor + Parts combined</div>
+  </div>
+
+  <div class="stat-card" style="--card-accent:#8B5CF6;">
+    <div class="stat-label">Assigned Technician</div>
+    <div style="font-size:18px; font-weight:700; margin-top:8px;">
+      {{ job.mechanic.name if job.mechanic else 'Not Assigned' }}
+    </div>
+    <div class="stat-footer">{{ job.mechanic.specialty if job.mechanic else 'Bay unallocated' }}</div>
+  </div>
+</div>
+
+<div style="display:grid; grid-template-columns: 1fr 1fr; gap:24px;">
+  <!-- Left Column: Job Details & Labor Form -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Technician & Labor Setup</div>
+    </div>
+
+    <form action="{{ url_for('services.update_job', detail_id=job.id) }}" method="POST">
+      <div class="form-group">
+        <label class="form-label" for="job-mechanic-select">Allocated Mechanic</label>
+        <select class="form-control" id="job-mechanic-select" name="mechanic_id">
+          <option value="">-- Unassigned --</option>
+          {% for m in mechanics %}
+            <option value="{{ m.id }}" {% if job.mechanic_id == m.id %}selected{% endif %}>
+              {{ m.name }} ({{ m.specialty }}) - {{ m.status }} - {{ m.hourly_rate | currency }}/hr
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="job-status-select">Job Status</label>
+        <select class="form-control" id="job-status-select" name="status">
+          <option value="Assigned" {% if job.status == 'Assigned' %}selected{% endif %}>Assigned</option>
+          <option value="In Progress" {% if job.status == 'In Progress' %}selected{% endif %}>In Progress</option>
+          <option value="Awaiting Parts" {% if job.status == 'Awaiting Parts' %}selected{% endif %}>Awaiting Parts</option>
+          <option value="Completed" {% if job.status == 'Completed' %}selected{% endif %}>Completed</option>
+        </select>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label" for="job-labor-hours">Labor Hours</label>
+          <input type="number" step="0.25" min="0" class="form-control" id="job-labor-hours" name="labor_hours" value="{{ job.labor_hours }}">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="job-labor-cost">Labor Total (₹)</label>
+          <input type="number" step="0.50" min="0" class="form-control" id="job-labor-cost" name="labor_cost" value="{{ job.labor_cost }}">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="job-description">Job Scope & Operations</label>
+        <textarea class="form-control" id="job-description" name="job_description" rows="3" required>{{ job.job_description }}</textarea>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="job-diagnosis">Diagnostic Findings & Notes</label>
+        <textarea class="form-control" id="job-diagnosis" name="diagnosis" rows="2" placeholder="e.g. Brake calipers lubricated, rotor thickness verified at 28.2mm...">{{ job.diagnosis or '' }}</textarea>
+      </div>
+
+      <div style="display:flex; justify-content:flex-end;">
+        <button type="submit" class="btn btn-primary btn-sm" id="btn-save-job-details">
+          Save Job Details & Labor
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Right Column: Spare Parts Stock Consumption (PartUsage table) -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="18" height="18"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path></svg>
+        Parts Used in this Service
+      </div>
+    </div>
+
+    <!-- Add Part from Inventory Form -->
+    <div style="background:var(--bg-input); padding:14px; border-radius:var(--radius-md); border:1px solid var(--border-subtle); margin-bottom:18px;">
+      <div style="font-size:12.5px; font-weight:700; color:var(--text-dim); text-transform:uppercase; margin-bottom:10px;">
+        Add Spare Part (Deducts from Inventory)
+      </div>
+
+      <form action="{{ url_for('services.add_part_usage', detail_id=job.id) }}" method="POST">
+        <div class="form-group">
+          <label class="form-label" for="job-part-select">Select In-Stock Part</label>
+          <select class="form-control" id="job-part-select" name="part_id" required>
+            <option value="">-- Choose Spare Part --</option>
+            {% for p in spare_parts %}
+              <option value="{{ p.id }}">{{ p.name }} (SKU: {{ p.part_number }}) - {{ p.selling_price | currency }} [{{ p.stock_quantity }} in stock]</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div id="job-part-info" style="display:none; background:rgba(0,0,0,0.25); padding:8px 12px; border-radius:var(--radius-sm); margin-bottom:10px; font-size:12.5px;">
+          Unit Price: <strong id="selected-part-price" style="color:var(--accent-emerald);">₹0.00</strong> &bull;
+          Stock: <span id="selected-part-stock" style="font-weight:600;">0</span>
+        </div>
+
+        <div style="display:flex; gap:10px; align-items:flex-end;">
+          <div style="flex:1;">
+            <label class="form-label" for="job-part-quantity">Quantity</label>
+            <input type="number" min="1" value="1" class="form-control" id="job-part-quantity" name="quantity" required>
+          </div>
+          <button type="submit" class="btn btn-primary" id="btn-add-part-to-job" style="white-space:nowrap;">
+            + Add to Job
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Consumed Parts Table -->
+    <div class="table-responsive">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Part Name</th>
+            <th>Qty</th>
+            <th>Unit Price</th>
+            <th>Subtotal</th>
+            <th>Remove</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in job.part_usages %}
+          <tr>
+            <td>
+              <div style="font-weight:600;">{{ u.spare_part.name }}</div>
+              <div style="font-size:11px; font-family:var(--font-mono); color:var(--text-dim);">{{ u.spare_part.part_number }}</div>
+            </td>
+            <td>{{ u.quantity }}</td>
+            <td>{{ u.unit_price | currency }}</td>
+            <td style="font-weight:700; color:var(--accent-cyan);">{{ u.subtotal | currency }}</td>
+            <td>
+              <form action="{{ url_for('services.remove_part_usage', detail_id=job.id, usage_id=u.id) }}" method="POST">
+                <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Remove part and restore stock to inventory?')" title="Restore stock">
+                  &times;
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="5" style="text-align:center; padding:20px; color:var(--text-muted); font-size:13px;">
+              No spare parts added to this job yet. Select from the stock dropdown above.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

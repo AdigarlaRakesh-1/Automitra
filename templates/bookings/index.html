@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+
+{% block title %}Service Bookings Schedule{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="28" height="28" style="color:var(--primary);"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+      Service Bookings & Calendar
+    </h1>
+    <div class="page-subtitle">Schedule, track, and manage customer service appointments and prevent missed revenue.</div>
+  </div>
+
+  <div style="display:flex; gap:10px;">
+    <a href="{{ url_for('bookings.missed') }}" class="btn btn-secondary btn-sm" id="btn-view-missed">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="16" height="16"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+      Missed Bookings Center
+    </a>
+    <a href="{{ url_for('bookings.new_booking') }}" class="btn btn-primary btn-sm" id="btn-new-booking">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+      + Schedule New Booking
+    </a>
+  </div>
+</div>
+
+<!-- Filters Bar -->
+<div class="card" style="margin-bottom: 20px;">
+  <form method="GET" action="{{ url_for('bookings.index') }}" style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
+    <span style="font-size:13px; font-weight:600; color:var(--text-dim);">Status:</span>
+    <a href="{{ url_for('bookings.index') }}" class="btn btn-sm {% if not status_filter %}btn-primary{% else %}btn-secondary{% endif %}">All</a>
+    <a href="{{ url_for('bookings.index', status='Confirmed') }}" class="btn btn-sm {% if status_filter == 'Confirmed' %}btn-primary{% else %}btn-secondary{% endif %}">Confirmed</a>
+    <a href="{{ url_for('bookings.index', status='Pending') }}" class="btn btn-sm {% if status_filter == 'Pending' %}btn-primary{% else %}btn-secondary{% endif %}">Pending</a>
+    <a href="{{ url_for('bookings.index', status='In Progress') }}" class="btn btn-sm {% if status_filter == 'In Progress' %}btn-primary{% else %}btn-secondary{% endif %}">In Progress</a>
+    <a href="{{ url_for('bookings.index', status='Completed') }}" class="btn btn-sm {% if status_filter == 'Completed' %}btn-primary{% else %}btn-secondary{% endif %}">Completed</a>
+    <a href="{{ url_for('bookings.index', status='Missed') }}" class="btn btn-sm {% if status_filter == 'Missed' %}btn-danger{% else %}btn-secondary{% endif %}">Missed</a>
+
+    <div style="margin-left:auto; display:flex; gap:8px;">
+      <input type="date" name="date" class="form-control" style="width:auto; font-size:12px; padding:6px 10px;" value="{{ date_filter }}">
+      <button type="submit" class="btn btn-secondary btn-sm">Filter Date</button>
+      {% if date_filter or status_filter %}
+        <a href="{{ url_for('bookings.index') }}" class="btn btn-secondary btn-sm">Reset</a>
+      {% endif %}
+    </div>
+  </form>
+</div>
+
+<!-- Bookings List Table -->
+<div class="card">
+  <div class="table-responsive">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Booking #</th>
+          <th>Date & Time</th>
+          <th>Customer Name</th>
+          <th>Vehicle</th>
+          <th>Service Package</th>
+          <th>Status</th>
+          <th>Mechanic Bay</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for b in bookings %}
+        <tr {% if b.is_missed %}style="background:rgba(239, 68, 68, 0.05);"{% endif %}>
+          <td>
+            <a href="{{ url_for('bookings.view_booking', booking_id=b.id) }}" style="font-family:var(--font-mono); font-weight:800; color:var(--accent-cyan);">
+              {{ b.booking_number }}
+            </a>
+          </td>
+          <td>
+            <div style="font-weight:600;">{{ b.booking_date | format_date }}</div>
+            <div style="font-size:12px; color:var(--text-dim);">{{ b.booking_time }}</div>
+          </td>
+          <td>
+            <a href="{{ url_for('customers.view_customer', customer_id=b.customer_id) }}" style="font-weight:600;">
+              {{ b.customer.name }}
+            </a>
+            <div style="font-size:11px; color:var(--text-dim); font-family:var(--font-mono);">{{ b.customer.phone }}</div>
+          </td>
+          <td>
+            <div style="font-weight:600;">{{ b.vehicle.make }} {{ b.vehicle.model }}</div>
+            <div style="font-size:12px; font-family:var(--font-mono); color:var(--text-dim);">{{ b.vehicle.license_plate }}</div>
+          </td>
+          <td style="max-width:200px;">
+            <div style="font-size:13px; font-weight:500;">{{ b.service_type }}</div>
+          </td>
+          <td>
+            {% if b.status == 'Completed' %}
+              <span class="badge badge-success"><span class="badge-dot"></span> Completed</span>
+            {% elif b.status == 'In Progress' %}
+              <span class="badge badge-primary"><span class="badge-dot"></span> In Progress</span>
+            {% elif b.status == 'Confirmed' %}
+              <span class="badge badge-purple"><span class="badge-dot"></span> Confirmed</span>
+            {% elif b.status == 'Missed' or b.is_missed %}
+              <span class="badge badge-danger"><span class="badge-dot"></span> Missed</span>
+            {% else %}
+              <span class="badge badge-warning"><span class="badge-dot"></span> {{ b.status }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if b.service_detail and b.service_detail.mechanic %}
+              <span class="badge badge-gray">{{ b.service_detail.mechanic.name }}</span>
+            {% else %}
+              <span style="font-size:12px; color:var(--text-dim);">Not Assigned</span>
+            {% endif %}
+          </td>
+          <td>
+            <div style="display:flex; gap:6px;">
+              <a href="{{ url_for('bookings.view_booking', booking_id=b.id) }}" class="btn btn-secondary btn-sm" id="btn-booking-details-{{ b.id }}">
+                Manage
+              </a>
+              {% if b.status in ['Pending', 'Confirmed'] %}
+                <form action="{{ url_for('bookings.update_status', booking_id=b.id) }}" method="POST">
+                  <input type="hidden" name="status" value="In Progress">
+                  <button type="submit" class="btn btn-primary btn-sm" title="Start workshop service">Start</button>
+                </form>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="8" style="text-align:center; padding:32px; color:var(--text-muted);">
+            No bookings found. Click <strong>+ Schedule New Booking</strong> to book an appointment.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

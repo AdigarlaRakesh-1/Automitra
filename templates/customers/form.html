@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block title %}{{ action }} Customer{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">{{ action }} Customer</h1>
+    <div class="page-subtitle">Built-in duplicate record prevention validates unique phone numbers and email addresses.</div>
+  </div>
+  <div>
+    <a href="{{ url_for('customers.index') }}" class="btn btn-secondary btn-sm">&larr; Back to Customers</a>
+  </div>
+</div>
+
+<div class="card" style="max-width: 720px; margin: 0 auto;">
+  <!-- Live Duplicate Alert Container -->
+  <div id="duplicate-customer-alert" class="duplicate-alert-banner"></div>
+
+  {% if duplicate %}
+  <div class="alert alert-warning">
+    <strong>Duplicate Notice:</strong> A customer record with these details already exists: 
+    <a href="{{ url_for('customers.view_customer', customer_id=duplicate.id) }}" style="font-weight:700; text-decoration:underline;">
+      {{ duplicate.name }} (ID #{{ duplicate.id }})
+    </a>
+  </div>
+  {% endif %}
+
+  <form method="POST">
+    <input type="hidden" id="customer-id-input" value="{{ customer.id if customer else '' }}">
+
+    <div class="form-group">
+      <label class="form-label" for="customer-name-input">Full Name *</label>
+      <input type="text" class="form-control" id="customer-name-input" name="name" required placeholder="e.g. John Reynolds" value="{{ customer.name if customer else (form_data.name if form_data else '') }}">
+    </div>
+
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label" for="customer-phone-input">Phone Number * (Duplicate Detection)</label>
+        <input type="tel" class="form-control" id="customer-phone-input" name="phone" required placeholder="e.g. +1 (555) 234-5678" value="{{ customer.phone if customer else (form_data.phone if form_data else '') }}">
+        <small style="font-size:11.5px; color:var(--text-dim);">Live duplicate check validates against existing garage database records.</small>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="customer-email-input">Email Address</label>
+        <input type="email" class="form-control" id="customer-email-input" name="email" placeholder="e.g. john.reynolds@example.com" value="{{ customer.email if customer else (form_data.email if form_data else '') }}">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="customer-address-input">Billing / Residential Address</label>
+      <textarea class="form-control" id="customer-address-input" name="address" placeholder="e.g. 742 Evergreen Terrace, Springfield">{{ customer.address if customer else (form_data.address if form_data else '') }}</textarea>
+    </div>
+
+    <div style="display:flex; justify-content:flex-end; gap:12px; margin-top:24px;">
+      <a href="{{ url_for('customers.index') }}" class="btn btn-secondary">Cancel</a>
+      <button type="submit" class="btn btn-primary" id="btn-save-customer">
+        Save Customer Record
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block title %}Customers Directory{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="28" height="28" style="color:var(--primary);"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+      Customer Management
+    </h1>
+    <div class="page-subtitle">Centralized database to eliminate duplicate customer records and track comprehensive vehicle service history.</div>
+  </div>
+
+  <div style="display:flex; gap:10px;">
+    <a href="{{ url_for('customers.new_customer') }}" class="btn btn-primary" id="btn-add-customer">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+      + Register New Customer
+    </a>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom: 20px;">
+  <form method="GET" action="{{ url_for('customers.index') }}" style="display:flex; gap:12px; flex-wrap:wrap;">
+    <input type="text" name="search" class="form-control" style="flex:1; min-width:260px;" placeholder="Search customer by name, phone (+1 ...), or email..." value="{{ search }}">
+    <button type="submit" class="btn btn-secondary">Search</button>
+    {% if search %}
+      <a href="{{ url_for('customers.index') }}" class="btn btn-secondary">Clear</a>
+    {% endif %}
+  </form>
+</div>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Customer Name</th>
+          <th>Contact Information</th>
+          <th>Address</th>
+          <th>Registered Vehicles</th>
+          <th>Service Bookings</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in customers %}
+        <tr>
+          <td>
+            <div style="font-weight:700; font-size:15px;">
+              <a href="{{ url_for('customers.view_customer', customer_id=c.id) }}">
+                {{ c.name }}
+              </a>
+            </div>
+            <div style="font-size:11px; color:var(--text-dim);">Customer ID #{{ c.id }} &bull; Since {{ c.created_at | format_date }}</div>
+          </td>
+          <td>
+            <div style="font-weight:600; font-family:var(--font-mono); font-size:13px;">{{ c.phone }}</div>
+            {% if c.email %}
+              <div style="font-size:12px; color:var(--text-dim);">{{ c.email }}</div>
+            {% endif %}
+          </td>
+          <td style="color:var(--text-muted); font-size:13px; max-width:220px;">
+            {{ c.address or '—' }}
+          </td>
+          <td>
+            <span class="badge badge-primary">{{ c.vehicles|length }} Vehicle(s)</span>
+          </td>
+          <td>
+            <span class="badge badge-purple">{{ c.bookings|length }} Booking(s)</span>
+          </td>
+          <td>
+            <div style="display:flex; gap:6px;">
+              <a href="{{ url_for('customers.view_customer', customer_id=c.id) }}" class="btn btn-secondary btn-sm" id="btn-view-customer-{{ c.id }}">
+                Profile & History
+              </a>
+              <a href="{{ url_for('customers.edit_customer', customer_id=c.id) }}" class="btn btn-secondary btn-sm" id="btn-edit-customer-{{ c.id }}">
+                Edit
+              </a>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="6" style="text-align:center; padding:32px; color:var(--text-muted);">
+            No customers found. Click <strong>+ Register New Customer</strong> to add one.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

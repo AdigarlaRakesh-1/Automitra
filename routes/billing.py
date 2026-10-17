@@ -1,5 +1,5 @@
 import random
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from models import db, Bill, ServiceBooking, ServiceDetail, Customer, Payment
@@ -7,7 +7,7 @@ from models import db, Bill, ServiceBooking, ServiceDetail, Customer, Payment
 billing_bp = Blueprint('billing', __name__, url_prefix='/billing')
 
 def generate_invoice_number():
-    year = datetime.utcnow().year
+    year = datetime.now(timezone.utc).year
     rand_num = random.randint(10000, 99999)
     return f"INV-{year}-{rand_num}"
 
@@ -28,7 +28,7 @@ def index():
 
 @billing_bp.route('/generate/<int:booking_id>', methods=['GET', 'POST'])
 def generate_bill(booking_id):
-    booking = ServiceBooking.query.get_or_404(booking_id)
+    booking = db.get_or_404(ServiceBooking, booking_id)
 
     # If bill already exists, redirect to it
     if booking.bill:
@@ -93,7 +93,7 @@ def generate_bill(booking_id):
                 discount_amount=discount_amount,
                 grand_total=grand_total,
                 payment_status='Unpaid',
-                issued_at=datetime.utcnow()
+                issued_at=datetime.now(timezone.utc)
             )
             # Mark booking as completed if not already
             if booking.status != 'Completed':
@@ -111,12 +111,12 @@ def generate_bill(booking_id):
 
 @billing_bp.route('/<int:bill_id>')
 def view_invoice(bill_id):
-    bill = Bill.query.get_or_404(bill_id)
+    bill = db.get_or_404(Bill, bill_id)
     return render_template('billing/invoice.html', bill=bill)
 
 @billing_bp.route('/<int:bill_id>/edit', methods=['GET', 'POST'])
 def edit_bill(bill_id):
-    bill = Bill.query.get_or_404(bill_id)
+    bill = db.get_or_404(Bill, bill_id)
 
     # Prevent editing bills that already have recorded payments
     if bill.total_paid > Decimal('0.00'):

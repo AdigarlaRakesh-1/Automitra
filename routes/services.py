@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from models import db, ServiceDetail, ServiceBooking, Mechanic, SparePart, PartUsage, Bill
@@ -17,7 +17,7 @@ def index():
 
 @services_bp.route('/<int:detail_id>')
 def view_job(detail_id):
-    job = ServiceDetail.query.get_or_404(detail_id)
+    job = db.get_or_404(ServiceDetail, detail_id)
     mechanics = Mechanic.query.all()
     spare_parts = SparePart.query.filter(SparePart.stock_quantity > 0).order_by(SparePart.name.asc()).all()
     
@@ -25,7 +25,7 @@ def view_job(detail_id):
 
 @services_bp.route('/<int:detail_id>/update', methods=['POST'])
 def update_job(detail_id):
-    job = ServiceDetail.query.get_or_404(detail_id)
+    job = db.get_or_404(ServiceDetail, detail_id)
     mechanic_id = request.form.get('mechanic_id', type=int)
     job_description = request.form.get('job_description', '').strip()
     diagnosis = request.form.get('diagnosis', '').strip()
@@ -80,12 +80,12 @@ def update_job(detail_id):
         job.status = status
 
         if status == 'In Progress' and not job.started_at:
-            job.started_at = datetime.utcnow()
+            job.started_at = datetime.now(timezone.utc)
             if job.booking:
                 job.booking.status = 'In Progress'
         elif status == 'Completed':
             if not job.completed_at:
-                job.completed_at = datetime.utcnow()
+                job.completed_at = datetime.now(timezone.utc)
             if job.booking:
                 job.booking.status = 'Completed'
 
@@ -99,7 +99,7 @@ def update_job(detail_id):
 
 @services_bp.route('/<int:detail_id>/add_part', methods=['POST'])
 def add_part_usage(detail_id):
-    job = ServiceDetail.query.get_or_404(detail_id)
+    job = db.get_or_404(ServiceDetail, detail_id)
 
     part_id = request.form.get('part_id', type=int)
     try:
@@ -162,8 +162,8 @@ def add_part_usage(detail_id):
 
 @services_bp.route('/<int:detail_id>/remove_part/<int:usage_id>', methods=['POST'])
 def remove_part_usage(detail_id, usage_id):
-    job = ServiceDetail.query.get_or_404(detail_id)
-    usage = PartUsage.query.get_or_404(usage_id)
+    job = db.get_or_404(ServiceDetail, detail_id)
+    usage = db.get_or_404(PartUsage, usage_id)
 
     # Cross-Job Part Usage Ownership Validation (Prevent IDOR)
     if usage.service_detail_id != job.id:

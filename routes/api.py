@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-from models import Customer, Vehicle, SparePart
+from models import db, Customer, Vehicle, SparePart
 
 api_bp = Blueprint('api', __name__, url_prefix='/api')
 
@@ -41,7 +41,7 @@ def customer_vehicles(customer_id):
 
 @api_bp.route('/part_info/<int:part_id>')
 def part_info(part_id):
-    part = SparePart.query.get_or_404(part_id)
+    part = db.get_or_404(SparePart, part_id)
     return jsonify({
         'id': part.id,
         'part_number': part.part_number,

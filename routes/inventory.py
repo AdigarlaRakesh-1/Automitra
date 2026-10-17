@@ -101,7 +101,7 @@ def new_part():
 
 @inventory_bp.route('/<int:part_id>/edit', methods=['GET', 'POST'])
 def edit_part(part_id):
-    part = SparePart.query.get_or_404(part_id)
+    part = db.get_or_404(SparePart, part_id)
     if request.method == 'POST':
         part_number = request.form.get('part_number', '').strip().upper()
         name = request.form.get('name', '').strip()
@@ -153,7 +153,7 @@ def edit_part(part_id):
 
 @inventory_bp.route('/<int:part_id>/restock', methods=['POST'])
 def restock_part(part_id):
-    part = SparePart.query.get_or_404(part_id)
+    part = db.get_or_404(SparePart, part_id)
     try:
         added_qty = int(request.form.get('quantity', '0'))
     except (ValueError, TypeError):
@@ -179,7 +179,7 @@ def restock_part(part_id):
 
 @inventory_bp.route('/<int:part_id>/delete', methods=['POST'])
 def delete_part(part_id):
-    part = SparePart.query.get_or_404(part_id)
+    part = db.get_or_404(SparePart, part_id)
     # Check if part has existing usage history
     if part.usages:
         flash(f'Cannot delete part "{part.name}" because it is linked to {len(part.usages)} historical service orders. Adjust stock to 0 instead.', 'danger')

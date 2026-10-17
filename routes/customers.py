@@ -48,7 +48,7 @@ def new_customer():
 
 @customers_bp.route('/<int:customer_id>')
 def view_customer(customer_id):
-    customer = Customer.query.get_or_404(customer_id)
+    customer = db.get_or_404(Customer, customer_id)
     # Complete service history timeline
     bookings = ServiceBooking.query.filter_by(customer_id=customer_id).order_by(ServiceBooking.booking_date.desc()).all()
     bills = Bill.query.filter_by(customer_id=customer_id).order_by(Bill.issued_at.desc()).all()
@@ -64,7 +64,7 @@ def view_customer(customer_id):
 
 @customers_bp.route('/<int:customer_id>/edit', methods=['GET', 'POST'])
 def edit_customer(customer_id):
-    customer = Customer.query.get_or_404(customer_id)
+    customer = db.get_or_404(Customer, customer_id)
     if request.method == 'POST':
         name = request.form.get('name', '').strip()
         phone = request.form.get('phone', '').strip()
@@ -96,7 +96,7 @@ def edit_customer(customer_id):
 
 @customers_bp.route('/<int:customer_id>/delete', methods=['POST'])
 def delete_customer(customer_id):
-    customer = Customer.query.get_or_404(customer_id)
+    customer = db.get_or_404(Customer, customer_id)
 
     # Protect customers with historical bills or invoices
     if customer.bills:

@@ -81,14 +81,14 @@ def new_vehicle():
 
 @vehicles_bp.route('/<int:vehicle_id>')
 def view_vehicle(vehicle_id):
-    vehicle = Vehicle.query.get_or_404(vehicle_id)
+    vehicle = db.get_or_404(Vehicle, vehicle_id)
     # Service history tracking: full log of services, mechanic notes, and parts replaced
     service_history = ServiceBooking.query.filter_by(vehicle_id=vehicle.id).order_by(ServiceBooking.booking_date.desc()).all()
     return render_template('vehicles/view.html', vehicle=vehicle, service_history=service_history)
 
 @vehicles_bp.route('/<int:vehicle_id>/edit', methods=['GET', 'POST'])
 def edit_vehicle(vehicle_id):
-    vehicle = Vehicle.query.get_or_404(vehicle_id)
+    vehicle = db.get_or_404(Vehicle, vehicle_id)
     customers = Customer.query.order_by(Customer.name.asc()).all()
 
     if request.method == 'POST':
@@ -139,7 +139,7 @@ def edit_vehicle(vehicle_id):
 
 @vehicles_bp.route('/<int:vehicle_id>/delete', methods=['POST'])
 def delete_vehicle(vehicle_id):
-    vehicle = Vehicle.query.get_or_404(vehicle_id)
+    vehicle = db.get_or_404(Vehicle, vehicle_id)
     c_id = vehicle.customer_id
 
     # Protect vehicles with historical bookings or service records

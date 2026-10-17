@@ -69,7 +69,7 @@ def new_mechanic():
 
 @mechanics_bp.route('/<int:mechanic_id>/edit', methods=['GET', 'POST'])
 def edit_mechanic(mechanic_id):
-    mechanic = Mechanic.query.get_or_404(mechanic_id)
+    mechanic = db.get_or_404(Mechanic, mechanic_id)
     if request.method == 'POST':
         name = request.form.get('name', '').strip()
         phone = request.form.get('phone', '').strip()
@@ -111,7 +111,7 @@ def edit_mechanic(mechanic_id):
 
 @mechanics_bp.route('/<int:mechanic_id>/status', methods=['POST'])
 def update_status(mechanic_id):
-    mechanic = Mechanic.query.get_or_404(mechanic_id)
+    mechanic = db.get_or_404(Mechanic, mechanic_id)
     new_status = request.form.get('status')
     if new_status in ALLOWED_MECHANIC_STATUSES:
         mechanic.status = new_status
@@ -123,6 +123,6 @@ def update_status(mechanic_id):
 
 @mechanics_bp.route('/<int:mechanic_id>')
 def view_mechanic(mechanic_id):
-    mechanic = Mechanic.query.get_or_404(mechanic_id)
+    mechanic = db.get_or_404(Mechanic, mechanic_id)
     assigned_jobs = ServiceDetail.query.filter_by(mechanic_id=mechanic.id).order_by(ServiceDetail.id.desc()).all()
     return render_template('mechanics/view.html', mechanic=mechanic, assigned_jobs=assigned_jobs)

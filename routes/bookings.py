@@ -1,12 +1,12 @@
 import random
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from models import db, ServiceBooking, ServiceDetail, Customer, Vehicle, Mechanic
 
 bookings_bp = Blueprint('bookings', __name__, url_prefix='/bookings')
 
 def generate_booking_number():
-    year = datetime.utcnow().year
+    year = datetime.now(timezone.utc).year
     rand_num = random.randint(10000, 99999)
     return f"BK-{year}-{rand_num}"
 
@@ -143,13 +143,13 @@ def new_booking():
 
 @bookings_bp.route('/<int:booking_id>')
 def view_booking(booking_id):
-    booking = ServiceBooking.query.get_or_404(booking_id)
+    booking = db.get_or_404(ServiceBooking, booking_id)
     mechanics = Mechanic.query.all()
     return render_template('bookings/view.html', booking=booking, mechanics=mechanics)
 
 @bookings_bp.route('/<int:booking_id>/status', methods=['POST'])
 def update_status(booking_id):
-    booking = ServiceBooking.query.get_or_404(booking_id)
+    booking = db.get_or_404(ServiceBooking, booking_id)
     new_status = request.form.get('status')
     
     valid_statuses = {'Pending', 'Confirmed', 'In Progress', 'Completed', 'Cancelled', 'Missed'}
@@ -164,17 +164,17 @@ def update_status(booking_id):
             booking_id=booking.id,
             job_description=booking.service_type,
             status='In Progress',
-            started_at=datetime.utcnow()
+            started_at=datetime.now(timezone.utc)
         )
         db.session.add(detail)
     elif new_status == 'In Progress' and booking.service_detail:
         booking.service_detail.status = 'In Progress'
         if not booking.service_detail.started_at:
-            booking.service_detail.started_at = datetime.utcnow()
+            booking.service_detail.started_at = datetime.now(timezone.utc)
     elif new_status == 'Completed' and booking.service_detail:
         booking.service_detail.status = 'Completed'
         if not booking.service_detail.completed_at:
-            booking.service_detail.completed_at = datetime.utcnow()
+            booking.service_detail.completed_at = datetime.now(timezone.utc)
 
     db.session.commit()
     flash(f'Booking #{booking.booking_number} status updated to "{new_status}".', 'info')
@@ -183,7 +183,7 @@ def update_status(booking_id):
 
 @bookings_bp.route('/<int:booking_id>/reschedule', methods=['POST'])
 def reschedule(booking_id):
-    booking = ServiceBooking.query.get_or_404(booking_id)
+    booking = db.get_or_404(ServiceBooking, booking_id)
     new_date_str = request.form.get('reschedule_date')
     new_time = request.form.get('reschedule_time')
 

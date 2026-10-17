@@ -1,9 +1,12 @@
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from decimal import Decimal
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func
 
 db = SQLAlchemy()
+
+def utc_now():
+    return datetime.now(timezone.utc)
 
 # ---------------------------------------------------------------------
 # 1. Customers Table
@@ -16,8 +19,8 @@ class Customer(db.Model):
     phone = db.Column(db.String(30), nullable=False, unique=True, index=True)
     email = db.Column(db.String(120), nullable=True)
     address = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
     
     # Relationships
     vehicles = db.relationship('Vehicle', backref='customer', cascade='all, delete-orphan', lazy=True)
@@ -61,7 +64,7 @@ class Vehicle(db.Model):
     mileage = db.Column(db.Integer, default=0)
     fuel_type = db.Column(db.String(30), default='Petrol')
     color = db.Column(db.String(40), nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
     
     # Relationships
     bookings = db.relationship('ServiceBooking', backref='vehicle', lazy=True)
@@ -89,7 +92,7 @@ class Mechanic(db.Model):
     specialty = db.Column(db.String(100), nullable=False, default='General Service')
     status = db.Column(db.String(30), default='Available', index=True) # 'Available', 'Busy', 'On Leave'
     hourly_rate = db.Column(db.Numeric(10, 2), default=45.00)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
     
     # Relationships
     service_details = db.relationship('ServiceDetail', backref='mechanic', lazy=True)
@@ -120,7 +123,7 @@ class ServiceBooking(db.Model):
     service_type = db.Column(db.String(100), nullable=False)
     status = db.Column(db.String(40), default='Pending', index=True) # 'Pending', 'Confirmed', 'In Progress', 'Completed', 'Cancelled', 'Missed'
     notes = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
     
     # Relationships
     service_detail = db.relationship('ServiceDetail', backref='booking', uselist=False, cascade='all, delete-orphan')
@@ -193,7 +196,7 @@ class SparePart(db.Model):
     stock_quantity = db.Column(db.Integer, default=0, index=True)
     min_reorder_level = db.Column(db.Integer, default=5)
     location_bin = db.Column(db.String(50), nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
     
     # Relationships
     usages = db.relationship('PartUsage', backref='spare_part', lazy=True)
@@ -223,7 +226,7 @@ class PartUsage(db.Model):
     quantity = db.Column(db.Integer, nullable=False, default=1)
     unit_price = db.Column(db.Numeric(10, 2), default=0.00)
     subtotal = db.Column(db.Numeric(10, 2), default=0.00)
-    used_at = db.Column(db.DateTime, default=datetime.utcnow)
+    used_at = db.Column(db.DateTime, default=utc_now)
 
     def __repr__(self):
         return f"<PartUsage Part #{self.part_id} x{self.quantity}>"
@@ -253,7 +256,7 @@ class Bill(db.Model):
     discount_amount = db.Column(db.Numeric(10, 2), default=0.00)
     grand_total = db.Column(db.Numeric(10, 2), default=0.00)
     payment_status = db.Column(db.String(30), default='Unpaid', index=True) # 'Unpaid', 'Partially Paid', 'Paid'
-    issued_at = db.Column(db.DateTime, default=datetime.utcnow)
+    issued_at = db.Column(db.DateTime, default=utc_now)
     
     # Relationships
     payments = db.relationship('Payment', backref='bill', cascade='all, delete-orphan', lazy=True)
@@ -297,7 +300,7 @@ class Payment(db.Model):
     amount = db.Column(db.Numeric(10, 2), nullable=False)
     payment_method = db.Column(db.String(40), nullable=False, default='Cash') # 'Cash', 'Credit Card', 'Debit Card', 'UPI / Online', 'Bank Transfer'
     transaction_reference = db.Column(db.String(100), nullable=True)
-    payment_date = db.Column(db.DateTime, default=datetime.utcnow)
+    payment_date = db.Column(db.DateTime, default=utc_now)
     notes = db.Column(db.Text, nullable=True)
 
     def __repr__(self):

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from models import db, Payment, Bill
@@ -63,7 +63,7 @@ def record_payment():
             amount=amount,
             payment_method=payment_method,
             transaction_reference=transaction_reference or None,
-            payment_date=datetime.utcnow(),
+            payment_date=datetime.now(timezone.utc),
             notes=notes or None
         )
         bill.payments.append(payment)
@@ -79,5 +79,5 @@ def record_payment():
 
 @payments_bp.route('/receipt/<int:payment_id>')
 def view_receipt(payment_id):
-    payment = Payment.query.get_or_404(payment_id)
+    payment = db.get_or_404(Payment, payment_id)
     return render_template('payments/receipt.html', payment=payment)

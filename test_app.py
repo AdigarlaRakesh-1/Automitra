@@ -218,3 +218,88 @@ def test_invalid_service_and_inventory_inputs(client):
     assert res.status_code == 200
     assert b"cannot be negative" in res.data
     assert SparePart.query.filter_by(part_number='NEG-TEST-001').first() is None
+
+def test_insufficient_stock_and_negative_stock_prevention(client):
+    """Verify that requests requesting more than available stock are rejected and stock cannot become negative."""
+    part = SparePart(
+        part_number='LOW-STOCK-999',
+        name='Critical Limited Stock Part',
+        category='Brakes',
+        cost_price=Decimal('100.00'),
+        selling_price=Decimal('200.00'),
+        stock_quantity=1,
+        min_reorder_level=2
+    )
+    db.session.add(part)
+    db.session.commit()
+
+    job = ServiceDetail.query.first()
+
+    # Attempt to order 2 units when only 1 is available
+    res = client.post(f'/services/{job.id}/add_part', data={'part_id': part.id, 'quantity': 2}, follow_redirects=True)
+    assert res.status_code == 200
+    assert b"Insufficient stock" in res.data
+    refreshed_part = db.session.get(SparePart, part.id)
+    assert refreshed_part.stock_quantity == 1
+
+    # First request: order 1 unit (should succeed)
+    res1 = client.post(f'/services/{job.id}/add_part', data={'part_id': part.id, 'quantity': 1}, follow_redirects=True)
+    assert res1.status_code == 200
+    refreshed_part = db.session.get(SparePart, part.id)
+    assert refreshed_part.stock_quantity == 0
+
+    # Sequential second request: order 1 more unit (must fail, stock cannot become negative)
+    res2 = client.post(f'/services/{job.id}/add_part', data={'part_id': part.id, 'quantity': 1}, follow_redirects=True)
+    assert res2.status_code == 200
+    assert b"Insufficient stock" in res2.data
+    refreshed_part = db.session.get(SparePart, part.id)
+    assert refreshed_part.stock_quantity == 0
+
+def test_part_usage_restoration_once(client):
+    """Verify that removing part usage restores stock exactly once."""
+    # Create an unbilled job to test removal and restoration
+    c = Customer.query.first()
+    v = c.vehicles[0]
+    b = ServiceBooking(
+        booking_number="BK-TEST-RESTORE",
+        customer_id=c.id,
+        vehicle_id=v.id,
+        booking_date=date.today(),
+        booking_time="10:00 AM",
+        service_type="Test Restore",
+        status="Confirmed"
+    )
+    db.session.add(b)
+    db.session.flush()
+
+    job = ServiceDetail(booking_id=b.id, job_description="Test restore job", status="In Progress")
+    db.session.add(job)
+    db.session.flush()
+
+    part = SparePart.query.filter(SparePart.stock_quantity > 5).first()
+    initial_stock = part.stock_quantity
+
+    # Add 2 units
+    client.post(f'/services/{job.id}/add_part', data={'part_id': part.id, 'quantity': 2}, follow_redirects=True)
+    refreshed_part = db.session.get(SparePart, part.id)
+    assert refreshed_part.stock_quantity == initial_stock - 2
+
+    usage = PartUsage.query.filter_by(service_detail_id=job.id, part_id=part.id).first()
+    assert usage is not None
+    usage_id = usage.id
+
+    # Remove the part usage
+    res = client.post(f'/services/{job.id}/remove_part/{usage_id}', follow_redirects=True)
+    assert res.status_code == 200
+
+    # Stock should be restored to initial
+    refreshed_part = db.session.get(SparePart, part.id)
+    assert refreshed_part.stock_quantity == initial_stock
+    assert db.session.get(PartUsage, usage_id) is None
+
+    # Attempting to remove it again should 404
+    res2 = client.post(f'/services/{job.id}/remove_part/{usage_id}', follow_redirects=True)
+    assert res2.status_code == 404
+    # Stock must remain unchanged
+    refreshed_part = db.session.get(SparePart, part.id)
+    assert refreshed_part.stock_quantity == initial_stock

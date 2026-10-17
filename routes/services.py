@@ -111,7 +111,11 @@ def add_part_usage(detail_id):
         flash('Please select a valid part and quantity greater than zero.', 'warning')
         return redirect(url_for('services.view_job', detail_id=job.id))
 
-    part = db.session.get(SparePart, part_id)
+    try:
+        part = db.session.query(SparePart).filter_by(id=part_id).with_for_update().first()
+    except Exception:
+        part = db.session.get(SparePart, part_id)
+
     if not part:
         flash('Selected part not found.', 'danger')
         return redirect(url_for('services.view_job', detail_id=job.id))
@@ -122,12 +126,23 @@ def add_part_usage(detail_id):
         return redirect(url_for('services.view_job', detail_id=job.id))
 
     try:
+        # Atomic conditional decrement to guarantee concurrency safety
+        rows_updated = db.session.query(SparePart).filter(
+            SparePart.id == part.id,
+            SparePart.stock_quantity >= quantity
+        ).update(
+            {SparePart.stock_quantity: SparePart.stock_quantity - quantity},
+            synchronize_session='fetch'
+        )
+
+        if rows_updated == 0:
+            db.session.rollback()
+            flash(f'Insufficient stock for {part.name}! Stock was modified concurrently.', 'danger')
+            return redirect(url_for('services.view_job', detail_id=job.id))
+
         # Calculate subtotal using Decimal
         unit_price = Decimal(str(part.selling_price))
         subtotal = unit_price * Decimal(quantity)
-
-        # Deduct stock
-        part.stock_quantity -= quantity
 
         usage = PartUsage(
             service_detail_id=job.id,
@@ -161,10 +176,13 @@ def remove_part_usage(detail_id, usage_id):
         return redirect(url_for('services.view_job', detail_id=job.id))
 
     try:
-        # Restore stock in inventory
+        # Restore stock in inventory atomically
         part = usage.spare_part
         if part:
-            part.stock_quantity += usage.quantity
+            db.session.query(SparePart).filter(SparePart.id == part.id).update(
+                {SparePart.stock_quantity: SparePart.stock_quantity + usage.quantity},
+                synchronize_session='fetch'
+            )
 
         db.session.delete(usage)
         db.session.commit()

@@ -159,8 +159,12 @@ def restock_part(part_id):
         return redirect(request.referrer or url_for('inventory.index'))
 
     try:
-        part.stock_quantity += added_qty
+        db.session.query(SparePart).filter(SparePart.id == part.id).update(
+            {SparePart.stock_quantity: SparePart.stock_quantity + added_qty},
+            synchronize_session='fetch'
+        )
         db.session.commit()
+        part = db.session.get(SparePart, part_id)
         flash(f'Successfully restocked {part.name} (+{added_qty}). New Stock: {part.stock_quantity} units.', 'success')
     except Exception as e:
         db.session.rollback()

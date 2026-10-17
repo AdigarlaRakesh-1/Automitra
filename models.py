@@ -167,6 +167,11 @@ class ServiceDetail(db.Model):
 # ---------------------------------------------------------------------
 class SparePart(db.Model):
     __tablename__ = 'SpareParts'
+    __table_args__ = (
+        db.CheckConstraint('stock_quantity >= 0', name='check_spare_parts_stock_non_negative'),
+        db.CheckConstraint('cost_price >= 0', name='check_spare_parts_cost_non_negative'),
+        db.CheckConstraint('selling_price >= 0', name='check_spare_parts_price_non_negative'),
+    )
     
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     part_number = db.Column(db.String(50), nullable=False, unique=True, index=True)
@@ -195,6 +200,11 @@ class SparePart(db.Model):
 # ---------------------------------------------------------------------
 class PartUsage(db.Model):
     __tablename__ = 'PartUsage'
+    __table_args__ = (
+        db.CheckConstraint('quantity > 0', name='check_part_usage_qty_positive'),
+        db.CheckConstraint('unit_price >= 0', name='check_part_usage_price_non_negative'),
+        db.CheckConstraint('subtotal >= 0', name='check_part_usage_subtotal_non_negative'),
+    )
     
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     service_detail_id = db.Column(db.Integer, db.ForeignKey('ServiceDetails.id', ondelete='CASCADE'), nullable=False)

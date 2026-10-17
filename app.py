@@ -13,24 +13,40 @@ def create_app(config_class=Config):
     if app.config.get('TESTING'):
         app.config['SQLALCHEMY_DATABASE_URI'] = app.config.get('SQLALCHEMY_DATABASE_URI', 'sqlite:///:memory:')
     else:
-        # Determine database connection: MySQL with graceful SQLite fallback
+        if app.config.get('USE_SQLITE') is not None:
+            use_sqlite = bool(app.config.get('USE_SQLITE'))
+        else:
+            use_sqlite = os.environ.get('USE_SQLITE', 'false').lower() in ('true', '1', 'yes')
         db_uri = app.config.get('DATABASE_URL') or app.config.get('MYSQL_URI')
-        use_sqlite = os.environ.get('USE_SQLITE', 'false').lower() == 'true'
         
-        if not use_sqlite and db_uri.startswith('mysql'):
+        if use_sqlite:
+            app.config['SQLALCHEMY_DATABASE_URI'] = app.config.get('SQLITE_URI')
+        elif db_uri and db_uri.startswith('mysql'):
             try:
-                print(f"Connecting to MySQL: {app.config.get('MYSQL_HOST')}:{app.config.get('MYSQL_PORT')}...")
+                host = app.config.get('MYSQL_HOST', 'localhost')
+                port = app.config.get('MYSQL_PORT', '3306')
+                print(f"Connecting to MySQL: {host}:{port}...")
                 test_engine = create_engine(db_uri, connect_args={'connect_timeout': 2})
                 with test_engine.connect() as conn:
                     conn.execute(text("SELECT 1"))
                 print("Successfully connected to MySQL database!")
                 app.config['SQLALCHEMY_DATABASE_URI'] = db_uri
             except Exception as e:
-                print(f"Notice: MySQL connection not available ({e}).")
-                print("Falling back to embedded SQLite database (automitra.db) for zero-setup execution.")
-                app.config['SQLALCHEMY_DATABASE_URI'] = app.config['SQLITE_URI']
+                error_type = type(e).__name__
+                print(f"CRITICAL: Failed to connect to configured MySQL database ({error_type}).")
+                raise RuntimeError(
+                    f"Failed to connect to configured MySQL database ({error_type}). "
+                    "In production or when MySQL is configured, silent fallback to SQLite is prohibited to prevent data loss. "
+                    "To explicitly use SQLite for local development or testing, set USE_SQLITE=true."
+                ) from None
+        elif app.config.get('ENV') == 'development':
+            print("Notice: No MySQL connection configured. Defaulting to development SQLite database (automitra.db).")
+            app.config['SQLALCHEMY_DATABASE_URI'] = app.config.get('SQLITE_URI')
         else:
-            app.config['SQLALCHEMY_DATABASE_URI'] = app.config['SQLITE_URI']
+            raise RuntimeError(
+                "CRITICAL: No valid database connection string configured for production. "
+                "Please configure DATABASE_URL or MySQL environment variables."
+            )
 
     db.init_app(app)
 
@@ -101,4 +117,5 @@ if __name__ == '__main__':
     print(f"Starting AutoMitra Web Application on http://127.0.0.1:{port}")
     with app.app_context():
         db.create_all()
-    app.run(host='0.0.0.0', port=port, debug=True)
+    debug_mode = app.config.get('DEBUG', False)
+    app.run(host='0.0.0.0', port=port, debug=debug_mode)

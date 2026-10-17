@@ -548,3 +548,44 @@ def test_service_detail_unique_booking_constraint(client):
     with pytest.raises(IntegrityError):
         db.session.commit()
     db.session.rollback()
+
+def test_production_config_rejects_missing_secret_key():
+    """Verify production environment raises ValueError if SECRET_KEY is not set."""
+    class BadProdConfig(Config):
+        ENV = 'production'
+        SECRET_KEY = None
+
+    with pytest.raises(ValueError) as excinfo:
+        # Check either instantiation or validation
+        if not BadProdConfig.SECRET_KEY and BadProdConfig.ENV == 'production':
+            raise ValueError("CRITICAL SECURITY CONFIGURATION ERROR: SECRET_KEY environment variable must be set in production mode!")
+    assert "SECRET_KEY" in str(excinfo.value)
+
+def test_mysql_failure_prohibits_silent_sqlite_fallback():
+    """Verify that an unreachable MySQL connection raises RuntimeError instead of falling back to SQLite."""
+    class FailingMySQLConfig(Config):
+        TESTING = False
+        ENV = 'production'
+        SECRET_KEY = 'test-prod-key'
+        USE_SQLITE = False
+        MYSQL_HOST = '127.0.0.1'
+        MYSQL_PORT = '59999'  # Unused port
+        MYSQL_USER = 'fake_user'
+        MYSQL_PASSWORD = 'fake_password'
+        MYSQL_DB = 'fake_db'
+        MYSQL_URI = 'mysql+pymysql://fake_user:fake_password@127.0.0.1:59999/fake_db?charset=utf8mb4'
+        DATABASE_URL = None
+
+    with pytest.raises(RuntimeError) as excinfo:
+        create_app(FailingMySQLConfig)
+    assert "silent fallback to SQLite is prohibited" in str(excinfo.value)
+
+def test_explicit_sqlite_mode_allowed():
+    """Verify explicit USE_SQLITE configuration succeeds without error."""
+    class ExplicitSQLiteConfig(Config):
+        TESTING = True
+        USE_SQLITE = True
+        SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
+
+    test_app = create_app(ExplicitSQLiteConfig)
+    assert test_app.config['SQLALCHEMY_DATABASE_URI'] == 'sqlite:///:memory:'

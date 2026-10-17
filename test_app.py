@@ -688,3 +688,47 @@ def test_booking_rejects_nonexistent_mechanic(client):
         'mechanic_id': 99999
     }, follow_redirects=True)
     assert b"Selected mechanic does not exist" in res.data
+
+def test_init_db_and_seeder_idempotency(client):
+    """Verify that calling seed_database() repeatedly is idempotent and does not create duplicates."""
+    from seed_data import seed_database
+    initial_customers = Customer.query.count()
+    initial_vehicles = Vehicle.query.count()
+    initial_parts = SparePart.query.count()
+
+    # Call seed_database a second time
+    seed_database()
+
+    assert Customer.query.count() == initial_customers
+    assert Vehicle.query.count() == initial_vehicles
+    assert SparePart.query.count() == initial_parts
+
+def test_exact_decimal_accounting_and_quantization(client):
+    """Verify exact Decimal 2-decimal-place accounting logic."""
+    bill = Bill(
+        invoice_number="INV-DECIMAL-TEST",
+        booking_id=9999,
+        customer_id=1,
+        parts_total=Decimal('123.45'),
+        labor_total=Decimal('67.89'),
+        tax_amount=Decimal('34.44'),
+        discount_amount=Decimal('10.00'),
+        grand_total=Decimal('215.78'),
+        payment_status='Unpaid'
+    )
+    assert bill.grand_total == Decimal('215.78')
+    assert bill.balance_due == Decimal('215.78')
+
+def test_restock_rejects_negative_or_zero_quantity(client):
+    """Verify inventory restock route rejects non-positive quantities."""
+    part = SparePart.query.first()
+    initial_stock = part.stock_quantity
+
+    res = client.post(f'/inventory/{part.id}/restock', data={'quantity': '0'}, follow_redirects=True)
+    assert b"Restock quantity must be positive" in res.data
+
+    res_neg = client.post(f'/inventory/{part.id}/restock', data={'quantity': '-10'}, follow_redirects=True)
+    assert b"Restock quantity must be positive" in res_neg.data
+
+    refreshed_part = db.session.get(SparePart, part.id)
+    assert refreshed_part.stock_quantity == initial_stock

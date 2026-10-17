@@ -38,6 +38,19 @@ def new_vehicle():
             flash('Customer, license plate, make, model, and year are required.', 'danger')
             return render_template('vehicles/form.html', vehicle=None, customers=customers, selected_customer_id=c_id, action='Add')
 
+        customer = db.session.get(Customer, c_id)
+        if not customer:
+            flash('Selected customer does not exist.', 'danger')
+            return render_template('vehicles/form.html', vehicle=None, customers=customers, selected_customer_id=c_id, action='Add')
+
+        if year < 1900 or year > 2100:
+            flash('Please enter a valid 4-digit vehicle year (1900-2100).', 'danger')
+            return render_template('vehicles/form.html', vehicle=None, customers=customers, selected_customer_id=c_id, action='Add')
+
+        if mileage < 0:
+            flash('Mileage cannot be negative.', 'danger')
+            return render_template('vehicles/form.html', vehicle=None, customers=customers, selected_customer_id=c_id, action='Add')
+
         # Check existing license plate
         existing = Vehicle.query.filter_by(license_plate=license_plate).first()
         if existing:
@@ -87,6 +100,18 @@ def edit_vehicle(vehicle_id):
         mileage = request.form.get('mileage', type=int) or 0
         fuel_type = request.form.get('fuel_type', 'Petrol')
         color = request.form.get('color', '').strip()
+
+        if not license_plate or not make or not model or not year:
+            flash('License plate, make, model, and year are required.', 'danger')
+            return render_template('vehicles/form.html', vehicle=vehicle, customers=customers, selected_customer_id=vehicle.customer_id, action='Edit')
+
+        if year < 1900 or year > 2100:
+            flash('Please enter a valid 4-digit vehicle year (1900-2100).', 'danger')
+            return render_template('vehicles/form.html', vehicle=vehicle, customers=customers, selected_customer_id=vehicle.customer_id, action='Edit')
+
+        if mileage < 0:
+            flash('Mileage cannot be negative.', 'danger')
+            return render_template('vehicles/form.html', vehicle=vehicle, customers=customers, selected_customer_id=vehicle.customer_id, action='Edit')
 
         # Check license plate uniqueness
         existing = Vehicle.query.filter(Vehicle.license_plate == license_plate, Vehicle.id != vehicle.id).first()

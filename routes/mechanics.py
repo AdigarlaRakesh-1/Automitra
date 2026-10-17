@@ -21,6 +21,8 @@ def allocation():
     unassigned_jobs = ServiceDetail.query.filter(ServiceDetail.mechanic_id.is_(None)).all()
     return render_template('mechanics/allocation.html', mechanics=mechanics, active_jobs=active_jobs, unassigned_jobs=unassigned_jobs)
 
+ALLOWED_MECHANIC_STATUSES = {'Available', 'Busy', 'On Leave'}
+
 @mechanics_bp.route('/new', methods=['GET', 'POST'])
 def new_mechanic():
     if request.method == 'POST':
@@ -28,10 +30,23 @@ def new_mechanic():
         phone = request.form.get('phone', '').strip()
         specialty = request.form.get('specialty', '').strip()
         status = request.form.get('status', 'Available')
-        hourly_rate = request.form.get('hourly_rate', type=float) or 45.00
 
         if not name or not phone or not specialty:
             flash('Name, phone, and primary specialty are required.', 'danger')
+            return render_template('mechanics/form.html', mechanic=None, action='Add New')
+
+        if status not in ALLOWED_MECHANIC_STATUSES:
+            flash(f'Invalid mechanic status "{status}". Allowed: {", ".join(sorted(ALLOWED_MECHANIC_STATUSES))}.', 'danger')
+            return render_template('mechanics/form.html', mechanic=None, action='Add New')
+
+        try:
+            raw_rate = request.form.get('hourly_rate', '45.00')
+            hourly_rate = Decimal(str(raw_rate)).quantize(Decimal('0.01'))
+            if hourly_rate < Decimal('0.00'):
+                flash('Hourly rate cannot be negative.', 'danger')
+                return render_template('mechanics/form.html', mechanic=None, action='Add New')
+        except Exception:
+            flash('Hourly rate must be a valid non-negative number.', 'danger')
             return render_template('mechanics/form.html', mechanic=None, action='Add New')
 
         try:
@@ -40,7 +55,7 @@ def new_mechanic():
                 phone=phone,
                 specialty=specialty,
                 status=status,
-                hourly_rate=Decimal(str(hourly_rate))
+                hourly_rate=hourly_rate
             )
             db.session.add(m)
             db.session.commit()
@@ -60,14 +75,31 @@ def edit_mechanic(mechanic_id):
         phone = request.form.get('phone', '').strip()
         specialty = request.form.get('specialty', '').strip()
         status = request.form.get('status', 'Available')
-        hourly_rate = request.form.get('hourly_rate', type=float) or 45.00
+
+        if not name or not phone or not specialty:
+            flash('Name, phone, and primary specialty are required.', 'danger')
+            return render_template('mechanics/form.html', mechanic=mechanic, action='Edit')
+
+        if status not in ALLOWED_MECHANIC_STATUSES:
+            flash(f'Invalid mechanic status "{status}". Allowed: {", ".join(sorted(ALLOWED_MECHANIC_STATUSES))}.', 'danger')
+            return render_template('mechanics/form.html', mechanic=mechanic, action='Edit')
+
+        try:
+            raw_rate = request.form.get('hourly_rate', '45.00')
+            hourly_rate = Decimal(str(raw_rate)).quantize(Decimal('0.01'))
+            if hourly_rate < Decimal('0.00'):
+                flash('Hourly rate cannot be negative.', 'danger')
+                return render_template('mechanics/form.html', mechanic=mechanic, action='Edit')
+        except Exception:
+            flash('Hourly rate must be a valid non-negative number.', 'danger')
+            return render_template('mechanics/form.html', mechanic=mechanic, action='Edit')
 
         try:
             mechanic.name = name
             mechanic.phone = phone
             mechanic.specialty = specialty
             mechanic.status = status
-            mechanic.hourly_rate = Decimal(str(hourly_rate))
+            mechanic.hourly_rate = hourly_rate
             db.session.commit()
             flash('Mechanic profile updated.', 'success')
             return redirect(url_for('mechanics.index'))
@@ -81,10 +113,12 @@ def edit_mechanic(mechanic_id):
 def update_status(mechanic_id):
     mechanic = Mechanic.query.get_or_404(mechanic_id)
     new_status = request.form.get('status')
-    if new_status in ['Available', 'Busy', 'On Leave']:
+    if new_status in ALLOWED_MECHANIC_STATUSES:
         mechanic.status = new_status
         db.session.commit()
         flash(f'Updated status for {mechanic.name} to "{new_status}".', 'info')
+    else:
+        flash(f'Invalid mechanic status "{new_status}".', 'danger')
     return redirect(request.referrer or url_for('mechanics.index'))
 
 @mechanics_bp.route('/<int:mechanic_id>')

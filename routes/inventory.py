@@ -53,6 +53,11 @@ def new_part():
         part_number = request.form.get('part_number', '').strip().upper()
         name = request.form.get('name', '').strip()
         category = request.form.get('category', '').strip()
+        location_bin = request.form.get('location_bin', '').strip()
+
+        if not part_number or not name or not category:
+            flash('Part number, name, and category are required.', 'danger')
+            return render_template('inventory/form.html', part=None, action='Add New')
         try:
             raw_cost = request.form.get('cost_price', '0')
             cost_price = Decimal(str(raw_cost)) if str(raw_cost).strip() != '' else Decimal('0.00')

@@ -589,3 +589,102 @@ def test_explicit_sqlite_mode_allowed():
 
     test_app = create_app(ExplicitSQLiteConfig)
     assert test_app.config['SQLALCHEMY_DATABASE_URI'] == 'sqlite:///:memory:'
+
+def test_inventory_new_part_validation_and_location_bin(client):
+    """Verify inventory new_part validates required fields and handles location_bin without error."""
+    # Missing required fields
+    res = client.post('/inventory/new', data={
+        'part_number': '',
+        'name': '',
+        'category': ''
+    }, follow_redirects=True)
+    assert b"Part number, name, and category are required" in res.data
+
+    # Valid creation with location_bin
+    res2 = client.post('/inventory/new', data={
+        'part_number': 'TST-BIN-001',
+        'name': 'Test Bin Part',
+        'category': 'Filters',
+        'cost_price': '150.00',
+        'selling_price': '300.00',
+        'stock_quantity': '10',
+        'min_reorder_level': '5',
+        'location_bin': 'BIN-Z9'
+    }, follow_redirects=True)
+    assert res2.status_code == 200
+    assert b"added to inventory" in res2.data
+    part = SparePart.query.filter_by(part_number='TST-BIN-001').first()
+    assert part is not None
+    assert part.location_bin == 'BIN-Z9'
+
+def test_vehicle_creation_and_edit_validation(client):
+    """Verify vehicle routes reject invalid year, negative mileage, and nonexistent customers."""
+    # Nonexistent customer
+    res = client.post('/vehicles/new', data={
+        'customer_id': 99999,
+        'license_plate': 'ZZ 99 AA 9999',
+        'make': 'TestMake',
+        'model': 'TestModel',
+        'year': 2021,
+        'mileage': 1000
+    }, follow_redirects=True)
+    assert b"Selected customer does not exist" in res.data
+
+    # Invalid year
+    c = Customer.query.first()
+    res2 = client.post('/vehicles/new', data={
+        'customer_id': c.id,
+        'license_plate': 'ZZ 99 AA 9998',
+        'make': 'TestMake',
+        'model': 'TestModel',
+        'year': 1850,
+        'mileage': 1000
+    }, follow_redirects=True)
+    assert b"valid 4-digit vehicle year" in res2.data
+
+    # Negative mileage
+    res3 = client.post('/vehicles/new', data={
+        'customer_id': c.id,
+        'license_plate': 'ZZ 99 AA 9997',
+        'make': 'TestMake',
+        'model': 'TestModel',
+        'year': 2021,
+        'mileage': -500
+    }, follow_redirects=True)
+    assert b"Mileage cannot be negative" in res3.data
+
+def test_mechanic_status_and_rate_validation(client):
+    """Verify mechanic routes reject invalid status values and negative hourly rates."""
+    # Invalid status in new_mechanic
+    res = client.post('/mechanics/new', data={
+        'name': 'Test Mechanic',
+        'phone': '+91 99999 88888',
+        'specialty': 'Brakes',
+        'status': 'InvalidStatus',
+        'hourly_rate': '500.00'
+    }, follow_redirects=True)
+    assert b"Invalid mechanic status" in res.data
+
+    # Negative hourly rate in new_mechanic
+    res2 = client.post('/mechanics/new', data={
+        'name': 'Test Mechanic 2',
+        'phone': '+91 99999 88887',
+        'specialty': 'Brakes',
+        'status': 'Available',
+        'hourly_rate': '-50.00'
+    }, follow_redirects=True)
+    assert b"Hourly rate cannot be negative" in res2.data
+
+def test_booking_rejects_nonexistent_mechanic(client):
+    """Verify booking route rejects nonexistent mechanic ID when requested."""
+    c = Customer.query.first()
+    v = Vehicle.query.filter_by(customer_id=c.id).first()
+    res = client.post('/bookings/new', data={
+        'customer_id': c.id,
+        'vehicle_id': v.id,
+        'booking_date': str(date.today()),
+        'booking_time': '11:00 AM',
+        'service_type': 'Oil Change',
+        'mechanic_id': 99999
+    }, follow_redirects=True)
+    assert b"Selected mechanic does not exist" in res.data

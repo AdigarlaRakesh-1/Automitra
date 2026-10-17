@@ -81,6 +81,13 @@ def new_booking():
             flash(f'Vehicle {vehicle.license_plate} does not belong to customer {customer.name}.', 'danger')
             return render_template('bookings/form.html', customers=customers, mechanics=mechanics, preselected_customer_id=c_id, preselected_vehicle_id=v_id)
 
+        # Validate Mechanic existence if provided
+        if initial_mechanic_id:
+            m = db.session.get(Mechanic, initial_mechanic_id)
+            if not m:
+                flash('Selected mechanic does not exist.', 'danger')
+                return render_template('bookings/form.html', customers=customers, mechanics=mechanics, preselected_customer_id=c_id, preselected_vehicle_id=v_id)
+
         # Validate booking date
         try:
             b_date = datetime.strptime(booking_date_str, '%Y-%m-%d').date()

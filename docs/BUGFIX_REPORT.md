@@ -20,7 +20,7 @@ This engineering effort conducted an end-to-end security audit, data integrity r
 - **Intermediate Test Suite**: 32 tests passed (0 failures, 0 warnings).
 - **Verified Phase 12 Test Suite**: 41 tests passed (0 failures, 0 warnings).
 - **Verified Phase 13 Test Suite**: 49 tests passed (0 failures, 0 warnings).
-- **Final Hardened Test Suite**: **50 tests passed** (0 failures, 0 warnings, execution time ~7.1s).
+- **Final Hardened Test Suite**: **53 tests passed** (0 failures, 0 warnings, execution time ~8.0s).
 - **Live MySQL Integration**: **100% Verified** against local MariaDB/MySQL server and CI MySQL 8.0 using dynamically isolated databases (`automitra_test_<uuid>`) and lifecycle protection guards ensuring pre-existing databases can never be dropped or overwritten.
 - **Migration Safety Verified**: The non-destructive production migration procedure is automated and regression-tested against a disposable database (`test_live_mysql_non_destructive_migration_procedure`).
 - **Financial Record Preservation**: **Enforced at both ORM and Database DDL levels** (`ON DELETE RESTRICT` on `Payments.bill_id`, `Bills`, and `ServiceBookings`). Attempted deletions of invoices with payment history are strictly rejected.
@@ -57,6 +57,7 @@ This engineering effort conducted an end-to-end security audit, data integrity r
 | **Phase 13** | Unsafe MySQL Integration Test Database Deletion Hazard | **Critical / Safety** | Integration test used a hardcoded database name and dropped it in cleanup, risking accidental deletion of pre-existing databases. Fixed with collision-proof `automitra_test_<uuid>` names, pre-existence checks, explicit test ownership tracking, and strict cleanup deletion guards. |
 | **Phase 13** | Silent Cascade Deletion of Financial Payment History | **Critical / Financial Integrity** | `Bill.payments` used `cascade='all, delete-orphan'` and `Payment.bill_id` had `ON DELETE CASCADE`. Deleting a bill silently wiped historical payment records. Changed to restrictive deletion at ORM and DDL levels, enabled SQLite FK enforcement via PRAGMA, and blocked deletions of bills with payments. |
 | **Phase 13** | Inconsistent Invoice Editing & Payment Idempotency | High / Financial Integrity | Editing bills with recorded payments was permitted; payments on settled zero-balance bills were accepted; missing database unique constraint on `Payments.transaction_reference`. Added route-level locks and database constraints. |
+| **Phase 14** | Test Database Connection Leaks on Setup Failures & Incomplete Duplicate Pre-Check | **Critical / Reliability & Migration Integrity** | Admin connection `_admin_conn` in `SafeMySQLTestDatabase` leaked on candidate name collision or creation failure; payments migration pre-check excluded empty strings `''`, which violate unique indexes in MySQL with error 1062. Implemented structured connection cleanup, complete non-NULL duplicate pre-flight detection, and regression tests. |
 
 ---
 
@@ -185,10 +186,29 @@ This engineering effort conducted an end-to-end security audit, data integrity r
      - Enforced `UNIQUE` constraint on `Payment.transaction_reference` at both ORM and database DDL levels, with graceful collision handling in the payments route.
      - Added regression tests:
        - `test_payment_route_rejects_settled_zero_balance_bill`
-       - `test_billing_edit_route_rejects_paid_invoices`
-       - `test_payment_unique_transaction_reference_db_constraint`
+       - `test_billing_edit_rou        - `test_payment_unique_transaction_reference_db_constraint`
   4. **Automated Non-Destructive Migration Testing**:
      - Added `test_live_mysql_non_destructive_migration_procedure` in `test_app.py` verifying the complete backup-first, portable migration procedure on a disposable MySQL database.
+
+### Phase 14: Test Database Connection Lifecycle Hardening & Complete Non-NULL Migration Pre-Check
+- **Files Modified**: `test_app.py`, `docs/BUGFIX_REPORT.md`, `README.md`.
+- **Changes**:
+  1. **Administrative Connection Lifecycle Protection (`SafeMySQLTestDatabase`)**:
+     - Ensured `_admin_conn` is closed whenever setup encounters an error or candidate name collision in `SafeMySQLTestDatabase.__enter__`.
+     - Wrapped pre-existence collision check and creation in `try...except Exception: self.close_admin(); raise`.
+     - Added idempotent `close_admin()` method that safely closes and resets `self._admin_conn = None`.
+     - Added unit test with mocks (`test_safe_mysql_admin_connection_cleanup_on_collision_and_error`) verifying cleanup occurs on candidate collision or creation failure without masking original exceptions.
+  2. **Comprehensive Payments Migration Pre-Check (Detecting Empty Strings & Non-NULL Duplicates)**:
+     - Updated Check 1 migration query to inspect all non-NULL references (`WHERE transaction_reference IS NOT NULL GROUP BY transaction_reference HAVING COUNT(*) > 1`), catching duplicate empty strings `''`.
+     - Added live MySQL integration test `test_live_mysql_payments_unique_reference_and_empty_string_behavior` proving:
+       - Duplicate `''` strings are flagged by pre-check and cause MySQL error 1062 upon `ADD CONSTRAINT ... UNIQUE`.
+       - Converting unprovided empty references to `NULL` succeeds.
+       - Multiple `NULL` references are accepted by MySQL's unique index.
+       - Non-empty duplicate references are strictly rejected.
+     - Added `test_sqlite_payments_unique_reference_empty_string_parity` ensuring SQLite behaves consistently.
+  3. **Documentation & README Alignment**:
+     - Updated `README.md` to clarify restrictive deletion rules for historical and financial records.
+     - Aligned Python version requirement to Python 3.11+ across quickstart, tech stack, and CI.
 
 ---
 
@@ -203,51 +223,54 @@ This engineering effort conducted an end-to-end security audit, data integrity r
 platform win32 -- Python 3.14.6, pytest-9.1.1, pluggy-1.7.0 -- C:\Users\krris\OneDrive\Documents\Inventory Management System\Automitra\.venv\Scripts\python.exe
 cachedir: .pytest_cache
 rootdir: C:\Users\krris\OneDrive\Documents\Inventory Management System\Automitra
-collecting ... collected 50 items
+collecting ... collected 53 items
 
-test_app.py::test_database_tables_seeded PASSED                          [  2%]
-test_app.py::test_duplicate_customer_detection PASSED                    [  4%]
-test_app.py::test_missed_bookings_logic PASSED                           [  6%]
-test_app.py::test_spare_parts_inventory_deduction PASSED                 [  8%]
-test_app.py::test_low_stock_detection PASSED                             [ 10%]
-test_app.py::test_billing_and_payments PASSED                            [ 12%]
-test_app.py::test_all_web_routes PASSED                                  [ 14%]
-test_app.py::test_cross_job_part_deletion_rejected PASSED                [ 16%]
-test_app.py::test_booking_rejects_vehicle_customer_mismatch PASSED       [ 18%]
-test_app.py::test_booking_rejects_nonexistent_customer_or_vehicle PASSED [ 20%]
-test_app.py::test_invalid_service_and_inventory_inputs PASSED            [ 22%]
-test_app.py::test_insufficient_stock_and_negative_stock_prevention PASSED [ 24%]
-test_app.py::test_part_usage_restoration_once PASSED                     [ 26%]
-test_app.py::test_authoritative_billing_rejects_client_tampering PASSED  [ 28%]
-test_app.py::test_billing_rejects_negative_tax_discount_and_excessive_discount PASSED [ 30%]
-test_app.py::test_payments_validation_and_lock_on_billed_invoices PASSED [ 32%]
-test_app.py::test_cannot_delete_customer_with_historical_bills_or_history PASSED [ 34%]
-test_app.py::test_cannot_delete_vehicle_with_service_history PASSED      [ 36%]
-test_app.py::test_valid_deletion_of_disposable_unreferenced_records PASSED [ 38%]
-test_app.py::test_orm_metadata_and_updated_at PASSED                     [ 40%]
-test_app.py::test_status_and_method_check_constraints PASSED             [ 42%]
-test_app.py::test_service_detail_unique_booking_constraint PASSED        [ 44%]
-test_app.py::test_production_config_rejects_missing_secret_key PASSED    [ 46%]
-test_app.py::test_mysql_failure_prohibits_silent_sqlite_fallback PASSED  [ 48%]
-test_app.py::test_explicit_sqlite_mode_allowed PASSED                    [ 50%]
-test_app.py::test_inventory_new_part_validation_and_location_bin PASSED  [ 52%]
-test_app.py::test_vehicle_creation_and_edit_validation PASSED            [ 54%]
-test_app.py::test_mechanic_status_and_rate_validation PASSED             [ 56%]
-test_app.py::test_booking_rejects_nonexistent_mechanic PASSED            [ 58%]
-test_app.py::test_init_db_and_seeder_idempotency PASSED                  [ 60%]
-test_app.py::test_exact_decimal_accounting_and_quantization PASSED       [ 62%]
-test_app.py::test_restock_rejects_negative_or_zero_quantity PASSED       [ 64%]
-test_app.py::test_csrf_protection_enforced PASSED                        [ 66%]
-test_app.py::test_multithreaded_concurrent_stock_deduction PASSED        [ 68%]
-test_app.py::test_booking_status_lock_on_paid_invoice PASSED             [ 70%]
-test_app.py::test_booking_reschedule_lock_on_completed_or_paid PASSED    [ 72%]
-test_app.py::test_service_job_status_lock_on_paid_invoice PASSED         [ 74%]
-test_app.py::test_duplicate_payment_transaction_reference_rejected PASSED [ 76%]
-test_app.py::test_bill_cascade_deletion_prevention PASSED                [ 78%]
-test_app.py::test_500_error_handler_sanitization PASSED                  [ 80%]
-test_app.py::test_mysql_lifecycle_guards_preexisting_database_from_deletion PASSED [ 82%]
-test_app.py::test_live_mysql_integration_and_integrity PASSED            [ 84%]
-test_app.py::test_live_mysql_non_destructive_migration_procedure PASSED  [ 86%]
+test_app.py::test_database_tables_seeded PASSED                          [  1%]
+test_app.py::test_duplicate_customer_detection PASSED                    [  3%]
+test_app.py::test_missed_bookings_logic PASSED                           [  5%]
+test_app.py::test_spare_parts_inventory_deduction PASSED                 [  7%]
+test_app.py::test_low_stock_detection PASSED                             [  9%]
+test_app.py::test_billing_and_payments PASSED                            [ 11%]
+test_app.py::test_all_web_routes PASSED                                  [ 13%]
+test_app.py::test_cross_job_part_deletion_rejected PASSED                [ 15%]
+test_app.py::test_booking_rejects_vehicle_customer_mismatch PASSED       [ 16%]
+test_app.py::test_booking_rejects_nonexistent_customer_or_vehicle PASSED [ 18%]
+test_app.py::test_invalid_service_and_inventory_inputs PASSED            [ 20%]
+test_app.py::test_insufficient_stock_and_negative_stock_prevention PASSED [ 22%]
+test_app.py::test_part_usage_restoration_once PASSED                     [ 24%]
+test_app.py::test_authoritative_billing_rejects_client_tampering PASSED  [ 26%]
+test_app.py::test_billing_rejects_negative_tax_discount_and_excessive_discount PASSED [ 28%]
+test_app.py::test_payments_validation_and_lock_on_billed_invoices PASSED [ 30%]
+test_app.py::test_cannot_delete_customer_with_historical_bills_or_history PASSED [ 32%]
+test_app.py::test_cannot_delete_vehicle_with_service_history PASSED      [ 33%]
+test_app.py::test_valid_deletion_of_disposable_unreferenced_records PASSED [ 35%]
+test_app.py::test_orm_metadata_and_updated_at PASSED                     [ 37%]
+test_app.py::test_status_and_method_check_constraints PASSED             [ 39%]
+test_app.py::test_service_detail_unique_booking_constraint PASSED        [ 41%]
+test_app.py::test_production_config_rejects_missing_secret_key PASSED    [ 43%]
+test_app.py::test_mysql_failure_prohibits_silent_sqlite_fallback PASSED  [ 45%]
+test_app.py::test_explicit_sqlite_mode_allowed PASSED                    [ 47%]
+test_app.py::test_inventory_new_part_validation_and_location_bin PASSED  [ 49%]
+test_app.py::test_vehicle_creation_and_edit_validation PASSED            [ 50%]
+test_app.py::test_mechanic_status_and_rate_validation PASSED             [ 52%]
+test_app.py::test_booking_rejects_nonexistent_mechanic PASSED            [ 54%]
+test_app.py::test_init_db_and_seeder_idempotency PASSED                  [ 56%]
+test_app.py::test_exact_decimal_accounting_and_quantization PASSED       [ 58%]
+test_app.py::test_restock_rejects_negative_or_zero_quantity PASSED       [ 60%]
+test_app.py::test_csrf_protection_enforced PASSED                        [ 62%]
+test_app.py::test_multithreaded_concurrent_stock_deduction PASSED        [ 64%]
+test_app.py::test_booking_status_lock_on_paid_invoice PASSED             [ 66%]
+test_app.py::test_booking_reschedule_lock_on_completed_or_paid PASSED    [ 67%]
+test_app.py::test_service_job_status_lock_on_paid_invoice PASSED         [ 69%]
+test_app.py::test_duplicate_payment_transaction_reference_rejected PASSED [ 71%]
+test_app.py::test_bill_cascade_deletion_prevention PASSED                [ 73%]
+test_app.py::test_500_error_handler_sanitization PASSED                  [ 75%]
+test_app.py::test_safe_mysql_admin_connection_cleanup_on_collision_and_error PASSED [ 77%]
+test_app.py::test_mysql_lifecycle_guards_preexisting_database_from_deletion PASSED [ 79%]
+test_app.py::test_live_mysql_integration_and_integrity PASSED            [ 81%]
+test_app.py::test_live_mysql_non_destructive_migration_procedure PASSED  [ 83%]
+test_app.py::test_live_mysql_payments_unique_reference_and_empty_string_behavior PASSED [ 84%]
+test_app.py::test_sqlite_payments_unique_reference_empty_string_parity PASSED [ 86%]
 test_app.py::test_bill_deletion_rejected_when_payments_exist PASSED      [ 88%]
 test_app.py::test_raw_sql_bill_deletion_rejected_by_foreign_key_restriction PASSED [ 90%]
 test_app.py::test_disposable_bill_without_payments_can_be_deleted PASSED [ 92%]
@@ -256,12 +279,12 @@ test_app.py::test_payment_route_rejects_settled_zero_balance_bill PASSED [ 96%]
 test_app.py::test_billing_edit_route_rejects_paid_invoices PASSED        [ 98%]
 test_app.py::test_payment_unique_transaction_reference_db_constraint PASSED [100%]
 
-============================= 50 passed in 7.09s ==============================
+============================= 53 passed in 7.98s ==============================
 ```
 
 ---
 
-## 5. MySQL Verification Status & Non-Destructive Migration Plan
+## 5. MySQL Verification Status & Non-Destructive Migration PlanDestructive Migration Plan
 
 ### Live MySQL Verification Status
 - **Status**: **VERIFIED LIVE** on localhost:3306 (MariaDB/MySQL 10.4.32) and CI (`mysql:8.0`).
@@ -295,18 +318,19 @@ Run these read-only diagnostic queries to verify that the existing database has 
 
 ```sql
 -- Check 1: Duplicate transaction references in Payments (must return 0 rows)
+-- NOTE: Checks ALL non-NULL values, including empty strings ('') which are non-NULL duplicates in unique indexes
 SELECT transaction_reference, COUNT(*) AS duplicate_count
 FROM Payments
-WHERE transaction_reference IS NOT NULL AND transaction_reference != ''
+WHERE transaction_reference IS NOT NULL
 GROUP BY transaction_reference
-HAVING duplicate_count > 1;
+HAVING COUNT(*) > 1;
 
 -- Check 2: Duplicate booking assignments in ServiceDetails (must return 0 rows for 1:1 relationship)
 SELECT booking_id, COUNT(*) AS duplicate_count
 FROM ServiceDetails
 WHERE booking_id IS NOT NULL
 GROUP BY booking_id
-HAVING duplicate_count > 1;
+HAVING COUNT(*) > 1;
 
 -- Check 3: Orphaned Payments referencing non-existent Bills (must return 0 rows)
 SELECT p.id AS payment_id, p.bill_id
@@ -328,7 +352,50 @@ LEFT JOIN Customers c ON sb.customer_id = c.id
 LEFT JOIN Vehicles v ON sb.vehicle_id = v.id
 WHERE c.id IS NULL OR v.id IS NULL;
 ```
-*If any diagnostic query returns rows, resolve the data anomalies before proceeding.*
+
+##### Resolving Pre-Flight Duplicate Reference Conflicts Safely
+> [!IMPORTANT]
+> **Understanding Non-NULL Values and Unique Constraints**:
+> Under standard SQL and MySQL InnoDB semantics, `NULL` indicates the absence of a value; because `NULL != NULL`, multiple rows may contain `NULL` without violating a unique index.
+> In contrast, an **empty string (`''`) is a concrete non-NULL scalar value**. If two or more rows in `Payments` contain an empty string `''`, creating a unique index on `transaction_reference` will fail immediately with:
+> `ERROR 1062 (23000): Duplicate entry '' for key 'uq_payments_transaction_ref'`.
+> Pre-flight Check 1 therefore inspects **all non-NULL values without exception** (`WHERE transaction_reference IS NOT NULL`) so no potential unique constraint violation is missed.
+
+**Safe, Auditable Conflict Resolution Protocol:**
+1. **Identify and Inspect Conflicting Payment Records**:
+   Run the following inspection query to extract full accounting context for any conflicting values:
+   ```sql
+   SELECT id, bill_id, amount, payment_method, transaction_reference, payment_date, notes
+   FROM Payments
+   WHERE transaction_reference IN (
+       SELECT transaction_reference
+       FROM Payments
+       WHERE transaction_reference IS NOT NULL
+       GROUP BY transaction_reference
+       HAVING COUNT(*) > 1
+   )
+   ORDER BY transaction_reference, payment_date;
+   ```
+2. **Determine the Correct Meaning of Each Value**:
+   - Inspect the associated `Bill`, invoice numbers, physical payment receipts, card POS machine audit slips, or bank/UPI gateway settlement reports.
+   - **Financial Auditability & Record Preservation Rule**: NEVER invent synthetic reference numbers and NEVER delete payment records to resolve constraint collisions. Payment history must remain completely intact.
+3. **Empty String Remediation (`''` -> `NULL`)**:
+   - In legacy databases, payments recorded without a transaction reference (e.g., Cash or Cheque where no electronic reference was provided) may have been stored as empty strings `''` rather than `NULL`.
+   - Convert empty strings to `NULL` **only if** the application's business rules and data model establish that an empty reference denotes "not provided":
+     ```sql
+     -- Safely normalize unprovided references to NULL
+     UPDATE Payments
+     SET transaction_reference = NULL
+     WHERE transaction_reference = '';
+     ```
+4. **Duplicate Non-Empty Reference Remediation**:
+   - If two distinct payment rows share a real non-empty reference (e.g. duplicate UTR or auth code):
+     - Check whether an operator double-submitted the payment form or entered the wrong reference number.
+     - Obtain the actual, verified reference number from the payment gateway or bank statement.
+     - Update the record using an explicitly logged administrative change statement with the correct, verified reference.
+5. **Mandatory Pre-Flight Re-verification**:
+   - The operator **must rerun Check 1** and confirm that it returns **zero rows** before proceeding to Phase 4 DDL execution.
+   - Never run destructive schema reinitialization (`schema.sql`) against an existing populated database.
 
 #### Phase 3: Inspect Actual Foreign Key Constraint Names
 Constraint names differ depending on whether the database was created with `schema.sql` (e.g. `fk_payment_bill`) or SQLAlchemy `db.create_all()` (e.g. `Payments_ibfk_1`). Query the actual names before dropping:

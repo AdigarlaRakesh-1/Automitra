@@ -970,6 +970,15 @@ class SafeMySQLTestDatabase:
             connect_timeout=3
         )
 
+    def close_admin(self):
+        """Safely close and nullify the administrative connection without raising secondary exceptions."""
+        if self._admin_conn:
+            try:
+                self._admin_conn.close()
+            except Exception:
+                pass
+            self._admin_conn = None
+
     def generate_candidate_name(self):
         import uuid
         return f"{self.prefix}{uuid.uuid4().hex[:12]}"
@@ -980,40 +989,42 @@ class SafeMySQLTestDatabase:
         except Exception as exc:
             pytest.skip(f"Live MySQL test service unavailable at {self.host}:{self.port} ({exc})")
 
-        # Generate a unique, collision-free database name
-        candidate = self.generate_candidate_name()
+        try:
+            # Generate a unique, collision-free database name
+            candidate = self.generate_candidate_name()
 
-        with self._admin_conn.cursor() as cur:
-            cur.execute("SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = %s", (candidate,))
-            if cur.fetchone():
-                raise RuntimeError(f"Safety violation: candidate test database '{candidate}' already exists!")
+            with self._admin_conn.cursor() as cur:
+                cur.execute("SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = %s", (candidate,))
+                if cur.fetchone():
+                    raise RuntimeError(f"Safety violation: candidate test database '{candidate}' already exists!")
 
-            cur.execute(f"CREATE DATABASE `{candidate}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
-            self.db_name = candidate
-            self.created_by_test = True
+                cur.execute(f"CREATE DATABASE `{candidate}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
+                self.db_name = candidate
+                self.created_by_test = True
 
-        return self
+            return self
+        except Exception:
+            # Mandatory Fix B: Ensure admin connection is closed immediately if setup fails after connect_admin
+            self.close_admin()
+            raise
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         try:
             if self.created_by_test and self.db_name and self.db_name.startswith(self.prefix):
                 try:
                     conn = self.connect_admin()
-                    with conn.cursor() as cur:
-                        cur.execute(f"DROP DATABASE IF EXISTS `{self.db_name}`")
-                    conn.close()
+                    try:
+                        with conn.cursor() as cur:
+                            cur.execute(f"DROP DATABASE IF EXISTS `{self.db_name}`")
+                    finally:
+                        conn.close()
                 except Exception as e:
                     print(f"Warning: Failed to drop test database {self.db_name}: {e}")
                 finally:
                     self.created_by_test = False
                     self.db_name = None
         finally:
-            if self._admin_conn:
-                try:
-                    self._admin_conn.close()
-                except Exception:
-                    pass
-                self._admin_conn = None
+            self.close_admin()
 
     @property
     def uri(self):
@@ -1053,6 +1064,8 @@ def test_mysql_lifecycle_guards_preexisting_database_from_deletion():
         # Ensure colliding_mgr did not claim ownership or set db_name
         assert colliding_mgr.created_by_test is False
         assert colliding_mgr.db_name is None
+        # Mandatory Fix B: Ensure admin connection was closed and not leaked
+        assert colliding_mgr._admin_conn is None
 
         # 3. Test that SafeMySQLTestDatabase.__exit__ refuses to drop an existing database
         # Even if db_name was set to the existing DB, created_by_test is False -> DO NOT DROP
@@ -1204,11 +1217,11 @@ def test_live_mysql_non_destructive_migration_procedure():
             cur.execute("INSERT INTO Payments (bill_id, amount, transaction_reference) VALUES (%s, 1500.00, 'TXN-MIG-001')", (bill_id,))
 
             # 2. Run Pre-Migration Validation Queries
-            # Check A: duplicate transaction references
+            # Check A: duplicate transaction references (all non-NULL values including empty strings)
             cur.execute("""
                 SELECT transaction_reference, COUNT(*) AS cnt
                 FROM Payments
-                WHERE transaction_reference IS NOT NULL AND transaction_reference != ''
+                WHERE transaction_reference IS NOT NULL
                 GROUP BY transaction_reference
                 HAVING cnt > 1;
             """)
@@ -1438,6 +1451,176 @@ def test_payment_unique_transaction_reference_db_constraint(client):
         payment_date=datetime.now(timezone.utc)
     )
     db.session.add(dup_payment)
+    with pytest.raises(IntegrityError):
+        db.session.commit()
+    db.session.rollback()
+
+def test_safe_mysql_admin_connection_cleanup_on_collision_and_error():
+    """Verify SafeMySQLTestDatabase closes administrative connection on collision or creation failure,
+    and ensures cleanup exceptions never mask original test exceptions."""
+    class MockAdminConnection:
+        def __init__(self, should_collide=False, should_fail_create=False):
+            self.closed = False
+            self.should_collide = should_collide
+            self.should_fail_create = should_fail_create
+
+        def close(self):
+            self.closed = True
+
+        def cursor(self):
+            conn = self
+            class MockCursor:
+                def __enter__(self):
+                    return self
+                def __exit__(self, *args):
+                    pass
+                def execute(self, query, params=None):
+                    if "CREATE DATABASE" in query and conn.should_fail_create:
+                        raise RuntimeError("Simulated CREATE DATABASE failure")
+                def fetchone(self):
+                    if conn.should_collide:
+                        return ("already_exists",)
+                    return None
+            return MockCursor()
+
+    # 1. Collision path: verify connection is closed on RuntimeError
+    mgr_collision = SafeMySQLTestDatabase()
+    mock_conn1 = MockAdminConnection(should_collide=True)
+    mgr_collision.connect_admin = lambda: mock_conn1
+
+    with pytest.raises(RuntimeError, match="Safety violation: candidate test database .* already exists"):
+        mgr_collision.__enter__()
+
+    assert mock_conn1.closed is True
+    assert mgr_collision._admin_conn is None
+
+    # 2. Database creation failure path: verify connection is closed and not leaked
+    mgr_create_fail = SafeMySQLTestDatabase()
+    mock_conn2 = MockAdminConnection(should_fail_create=True)
+    mgr_create_fail.connect_admin = lambda: mock_conn2
+
+    with pytest.raises(RuntimeError, match="Simulated CREATE DATABASE failure"):
+        mgr_create_fail.__enter__()
+
+    assert mock_conn2.closed is True
+    assert mgr_create_fail._admin_conn is None
+
+    # 3. Exception transparency path: exception raised inside test block is never masked by cleanup
+    mgr_normal = SafeMySQLTestDatabase()
+    mock_conn3 = MockAdminConnection()
+    mgr_normal.connect_admin = lambda: mock_conn3
+
+    with pytest.raises(ZeroDivisionError):
+        with mgr_normal:
+            raise ZeroDivisionError("Original test error must propagate cleanly")
+
+def test_live_mysql_payments_unique_reference_and_empty_string_behavior():
+    """Verify live MySQL behavior for Payment transaction references:
+    1. Multiple NULL references are permitted and do not collide.
+    2. Multiple empty string ('') references are flagged as duplicates by pre-flight check.
+    3. Adding UNIQUE constraint fails with errno 1062 if empty strings are not resolved.
+    4. Converting empty strings to NULL resolves the conflict safely without data loss.
+    5. After migration, multiple NULLs remain valid and duplicate non-empty strings are rejected.
+    """
+    import pymysql
+    import pymysql.err
+
+    with SafeMySQLTestDatabase() as test_db:
+        conn = pymysql.connect(
+            host=test_db.host,
+            port=test_db.port,
+            user=test_db.user,
+            password=test_db.password,
+            database=test_db.db_name
+        )
+        with conn.cursor() as cur:
+            # Setup base schema without unique index
+            cur.execute("CREATE TABLE Bills (id INT AUTO_INCREMENT PRIMARY KEY);")
+            cur.execute("INSERT INTO Bills VALUES (1);")
+            cur.execute("""
+                CREATE TABLE Payments (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    bill_id INT NOT NULL,
+                    amount DECIMAL(10,2) NOT NULL,
+                    transaction_reference VARCHAR(100) NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+
+            # 1. Insert two rows with NULL transaction_reference (e.g. cash payments)
+            cur.execute("INSERT INTO Payments (bill_id, amount, transaction_reference) VALUES (1, 50.00, NULL), (1, 75.00, NULL);")
+
+            # 2. Insert two rows with empty string '' transaction_reference
+            cur.execute("INSERT INTO Payments (bill_id, amount, transaction_reference) VALUES (1, 100.00, ''), (1, 200.00, '');")
+
+            # 3. Run updated pre-flight duplicate check: MUST detect the duplicate empty strings
+            cur.execute("""
+                SELECT transaction_reference, COUNT(*) AS duplicate_count
+                FROM Payments
+                WHERE transaction_reference IS NOT NULL
+                GROUP BY transaction_reference
+                HAVING COUNT(*) > 1;
+            """)
+            dups = cur.fetchall()
+            assert len(dups) == 1, "Pre-flight check must detect duplicate empty string values!"
+            assert dups[0][0] == ''
+            assert dups[0][1] == 2
+
+            # 4. Prove that applying unique index with duplicate empty strings FAILS on MySQL with errno 1062
+            with pytest.raises(pymysql.err.IntegrityError) as exc_info:
+                cur.execute("ALTER TABLE Payments ADD CONSTRAINT uq_payments_transaction_ref UNIQUE (transaction_reference);")
+            assert exc_info.value.args[0] == 1062, "Expected duplicate entry errno 1062 on empty string collisions"
+
+            # 5. Resolve conflict safely: convert unprovided empty references to NULL as documented
+            cur.execute("UPDATE Payments SET transaction_reference = NULL WHERE transaction_reference = '';")
+
+            # 6. Rerun pre-flight check: confirms 0 conflicts remain
+            cur.execute("""
+                SELECT transaction_reference, COUNT(*) AS duplicate_count
+                FROM Payments
+                WHERE transaction_reference IS NOT NULL
+                GROUP BY transaction_reference
+                HAVING COUNT(*) > 1;
+            """)
+            assert len(cur.fetchall()) == 0, "Pre-flight check must report zero conflicts after resolution!"
+
+            # 7. Now apply the UNIQUE constraint: MUST succeed
+            cur.execute("ALTER TABLE Payments ADD CONSTRAINT uq_payments_transaction_ref UNIQUE (transaction_reference);")
+
+            # 8. Verify multiple NULL references still coexist peacefully under the unique index
+            cur.execute("SELECT COUNT(*) FROM Payments WHERE transaction_reference IS NULL;")
+            assert cur.fetchone()[0] == 4, "All 4 NULL payments must be preserved!"
+
+            # 9. Verify inserting a valid reference succeeds
+            cur.execute("INSERT INTO Payments (bill_id, amount, transaction_reference) VALUES (1, 10.00, 'UPI-REF-001');")
+
+            # 10. Verify inserting a duplicate non-empty reference fails with errno 1062
+            with pytest.raises(pymysql.err.IntegrityError) as exc_info:
+                cur.execute("INSERT INTO Payments (bill_id, amount, transaction_reference) VALUES (1, 10.00, 'UPI-REF-001');")
+            assert exc_info.value.args[0] == 1062
+
+        conn.close()
+
+def test_sqlite_payments_unique_reference_empty_string_parity(client):
+    """Verify SQLite enforces uniqueness for duplicate empty strings while allowing multiple NULLs."""
+    from sqlalchemy.exc import IntegrityError
+    bill = Bill.query.first()
+    assert bill is not None
+
+    # Multiple NULL references are allowed
+    p1 = Payment(bill_id=bill.id, amount=Decimal('10.00'), payment_method='Cash', transaction_reference=None)
+    p2 = Payment(bill_id=bill.id, amount=Decimal('20.00'), payment_method='Cash', transaction_reference=None)
+    db.session.add(p1)
+    db.session.add(p2)
+    db.session.commit()
+
+    # First empty string is accepted
+    p_empty1 = Payment(bill_id=bill.id, amount=Decimal('5.00'), payment_method='Cash', transaction_reference='')
+    db.session.add(p_empty1)
+    db.session.commit()
+
+    # Second empty string must violate unique constraint
+    p_empty2 = Payment(bill_id=bill.id, amount=Decimal('5.00'), payment_method='Cash', transaction_reference='')
+    db.session.add(p_empty2)
     with pytest.raises(IntegrityError):
         db.session.commit()
     db.session.rollback()

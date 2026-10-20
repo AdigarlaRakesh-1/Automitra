@@ -21,7 +21,7 @@ Small and medium auto service centers often struggle with six major operational 
 
 ## 🗄️ Proposed Relational Database Schema (9 Tables)
 
-The centralized relational database comprises the 9 proposed tables with foreign-key constraints, cascading actions, and indexing:
+The relational database uses nine tables with foreign-key constraints, appropriate indexing, and restrictive deletion rules for historical and financial records:
 
 | # | Table Name | Purpose & Solution | Key Fields |
 |---|------------|--------------------|------------|
@@ -58,7 +58,7 @@ The native DDL script is provided in `schema.sql`.
 ## 🚀 Quickstart & Installation
 
 ### 1. Prerequisites
-Ensure you have **Python 3.10+** installed:
+Ensure you have **Python 3.11+** installed:
 ```bash
 python --version
 ```
@@ -119,14 +119,14 @@ http://127.0.0.1:5000
 
 ## 🧪 Automated Testing
 
-AutoMitra includes a comprehensive 50-item automated test suite covering all 9 tables, CSRF protection, concurrency safety, decimal precision accounting, restrictive foreign-key financial preservation, payment history protection, non-destructive migration testing, and safe real MySQL lifecycle integration:
+AutoMitra includes a comprehensive 53-item automated test suite covering all 9 tables, CSRF protection, concurrency safety, decimal precision accounting, restrictive foreign-key financial preservation, payment history protection, non-destructive migration testing, and safe real MySQL lifecycle integration:
 
 ```bash
 # Run test suite with isolated in-memory/file SQLite and live MySQL tests:
 python -m pytest test_app.py -v
 ```
 
-All 50 tests execute in ~7.1 seconds with zero deprecation warnings.
+All 53 tests execute in ~8.0 seconds with zero deprecation warnings.
 
 ---
 

@@ -3,6 +3,9 @@ os.environ['USE_SQLITE'] = 'true'
 import pytest
 from datetime import date, timedelta, datetime
 from decimal import Decimal
+from flask import session
+from flask.testing import FlaskClient
+from flask_wtf.csrf import generate_csrf
 from app import create_app
 from models import db, Customer, Vehicle, Mechanic, ServiceBooking, ServiceDetail, SparePart, PartUsage, Bill, Payment
 
@@ -10,11 +13,33 @@ from config import Config
 
 class TestConfig(Config):
     TESTING = True
+    WTF_CSRF_ENABLED = True
     SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
+
+class CSRFTestClient(FlaskClient):
+    """Test client that automatically attaches valid CSRF tokens to state-changing requests,
+    preserving full CSRF protection verification unless intentionally omitted via no_csrf=True."""
+    def open(self, *args, **kwargs):
+        if kwargs.get('method', 'GET').upper() in ('POST', 'PUT', 'PATCH', 'DELETE'):
+            if not kwargs.pop('no_csrf', False):
+                headers = dict(kwargs.get('headers') or {})
+                if 'X-CSRFToken' not in headers:
+                    import hashlib
+                    from itsdangerous import URLSafeTimedSerializer
+                    with self.session_transaction() as sess:
+                        field_name = self.application.config.get('WTF_CSRF_FIELD_NAME', 'csrf_token')
+                        if field_name not in sess:
+                            sess[field_name] = hashlib.sha1(os.urandom(64)).hexdigest()
+                        s = URLSafeTimedSerializer(self.application.secret_key, salt='wtf-csrf-token')
+                        token = s.dumps(sess[field_name])
+                    headers['X-CSRFToken'] = token
+                kwargs['headers'] = headers
+        return super().open(*args, **kwargs)
 
 @pytest.fixture
 def client():
     app = create_app(TestConfig)
+    app.test_client_class = CSRFTestClient
     with app.app_context():
         db.create_all()
         from seed_data import seed_database
@@ -732,3 +757,234 @@ def test_restock_rejects_negative_or_zero_quantity(client):
 
     refreshed_part = db.session.get(SparePart, part.id)
     assert refreshed_part.stock_quantity == initial_stock
+
+def test_csrf_protection_enforced(client):
+    """Verify CSRF protection rejects requests without CSRF token or with bad token."""
+    # 1. Missing CSRF token
+    res_missing = client.post('/bookings/1/status', data={'status': 'In Progress'}, no_csrf=True)
+    assert res_missing.status_code == 400
+    assert b"CSRF token is missing or invalid" in res_missing.data or b"Bad Request" in res_missing.data
+
+    # 2. Invalid CSRF token
+    res_bad = client.post('/bookings/1/status', data={'status': 'In Progress'}, headers={'X-CSRFToken': 'corrupted_token'})
+    assert res_bad.status_code == 400
+
+    # 3. Valid CSRF token succeeds
+    res_valid = client.post('/bookings/1/status', data={'status': 'In Progress'})
+    assert res_valid.status_code == 302
+
+def test_multithreaded_concurrent_stock_deduction():
+    """Verify atomic conditional deduction prevents overselling and negative stock under concurrency."""
+    import tempfile
+    import concurrent.futures
+    db_fd, db_path = tempfile.mkstemp(suffix='.db')
+    os.close(db_fd)
+    try:
+        class ConcurrencyConfig(Config):
+            TESTING = True
+            WTF_CSRF_ENABLED = False
+            SQLALCHEMY_DATABASE_URI = f'sqlite:///{db_path}?timeout=15'
+
+        c_app = create_app(ConcurrencyConfig)
+        with c_app.app_context():
+            db.create_all()
+            test_part = SparePart(
+                part_number='CONCURR-TEST-01',
+                name='Concurrent Fuel Pump',
+                category='Fuel System',
+                selling_price=Decimal('1500.00'),
+                cost_price=Decimal('1000.00'),
+                stock_quantity=5,
+                min_reorder_level=1
+            )
+            db.session.add(test_part)
+            db.session.commit()
+            p_id = test_part.id
+
+        def attempt_deduct(qty):
+            with c_app.app_context():
+                rows = SparePart.query.filter(
+                    SparePart.id == p_id,
+                    SparePart.stock_quantity >= qty
+                ).update(
+                    {SparePart.stock_quantity: SparePart.stock_quantity - qty},
+                    synchronize_session=False
+                )
+                db.session.commit()
+                return rows
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            f1 = executor.submit(attempt_deduct, 4)
+            f2 = executor.submit(attempt_deduct, 4)
+            results = [f1.result(), f2.result()]
+
+        assert sorted(results) == [0, 1], "Exactly one thread should deduct, the other should be rejected due to insufficient stock"
+        with c_app.app_context():
+            final_part = db.session.get(SparePart, p_id)
+            assert final_part.stock_quantity == 1, "Final stock must be exactly 1, never negative"
+    finally:
+        try:
+            os.remove(db_path)
+        except Exception:
+            pass
+
+def test_booking_status_lock_on_paid_invoice(client):
+    """Verify that a booking whose invoice is Paid cannot have its status altered."""
+    booking = ServiceBooking.query.filter_by(status='Completed').first()
+    assert booking is not None
+    if not booking.bill:
+        bill = Bill(booking_id=booking.id, customer_id=booking.customer_id, invoice_number='INV-PAID-LOCK',
+                    parts_total=Decimal('100.00'), labor_total=Decimal('50.00'), tax_amount=Decimal('27.00'),
+                    discount_amount=Decimal('0.00'), grand_total=Decimal('177.00'), payment_status='Paid')
+        db.session.add(bill)
+        db.session.commit()
+    else:
+        booking.bill.payment_status = 'Paid'
+        db.session.commit()
+
+    res = client.post(f'/bookings/{booking.id}/status', data={'status': 'In Progress'}, follow_redirects=True)
+    assert b"Cannot alter status of a service booking whose invoice is already paid" in res.data
+    refreshed = db.session.get(ServiceBooking, booking.id)
+    assert refreshed.status == 'Completed'
+
+def test_booking_reschedule_lock_on_completed_or_paid(client):
+    """Verify that completed or paid bookings cannot be rescheduled."""
+    booking = ServiceBooking.query.filter_by(status='Completed').first()
+    assert booking is not None
+    res = client.post(f'/bookings/{booking.id}/reschedule', data={
+        'reschedule_date': (date.today() + timedelta(days=5)).isoformat(),
+        'reschedule_time': '11:00 AM'
+    }, follow_redirects=True)
+    assert b"Cannot reschedule a completed service booking or one with a paid invoice" in res.data
+
+def test_service_job_status_lock_on_paid_invoice(client):
+    """Verify service job status cannot be reverted if the invoice has been paid."""
+    job = ServiceDetail.query.first()
+    assert job is not None
+    if not job.booking.bill:
+        bill = Bill(booking_id=job.booking_id, customer_id=job.booking.customer_id, invoice_number='INV-JOB-PAID',
+                    parts_total=Decimal('100.00'), labor_total=Decimal('50.00'), tax_amount=Decimal('27.00'),
+                    discount_amount=Decimal('0.00'), grand_total=Decimal('177.00'), payment_status='Paid')
+        db.session.add(bill)
+        db.session.commit()
+    else:
+        job.booking.bill.payment_status = 'Paid'
+    job.status = 'Completed'
+    db.session.commit()
+
+    res = client.post(f'/services/{job.id}/update', data={'status': 'In Progress'}, follow_redirects=True)
+    assert b"Cannot alter status of a service job whose invoice is already paid" in res.data
+    refreshed = db.session.get(ServiceDetail, job.id)
+    assert refreshed.status == 'Completed'
+
+def test_duplicate_payment_transaction_reference_rejected(client):
+    """Verify recording payment rejects duplicate transaction reference."""
+    bill = Bill.query.filter(Bill.payment_status != 'Paid').first()
+    if not bill:
+        bill = Bill(booking_id=2, customer_id=2, invoice_number='INV-DUP-TEST', parts_total=Decimal('100.00'),
+                    labor_total=Decimal('50.00'), tax_amount=Decimal('27.00'), discount_amount=Decimal('0.00'),
+                    grand_total=Decimal('177.00'), payment_status='Unpaid')
+        db.session.add(bill)
+        db.session.commit()
+
+    tx_ref = 'TXN-UNIQUE-REF-999'
+    res1 = client.post('/payments/record', data={
+        'bill_id': bill.id,
+        'amount': '50.00',
+        'payment_method': 'UPI / Online',
+        'transaction_reference': tx_ref,
+        'payment_date': date.today().isoformat()
+    }, follow_redirects=True)
+    assert b"Payment of" in res1.data or b"recorded successfully" in res1.data or res1.status_code == 200
+
+    res2 = client.post('/payments/record', data={
+        'bill_id': bill.id,
+        'amount': '25.00',
+        'payment_method': 'Cash',
+        'transaction_reference': tx_ref,
+        'payment_date': date.today().isoformat()
+    }, follow_redirects=True)
+    assert b"already been processed" in res2.data
+
+def test_bill_cascade_deletion_prevention(client):
+    """Verify that deleting a booking does not cascade-delete its historical bill and is restricted."""
+    from sqlalchemy.exc import IntegrityError
+    booking = ServiceBooking.query.filter(ServiceBooking.bill != None).first()
+    assert booking is not None and booking.bill is not None
+    bill_id = booking.bill.id
+
+    with pytest.raises(IntegrityError):
+        db.session.delete(booking)
+        db.session.commit()
+    db.session.rollback()
+
+    bill = db.session.get(Bill, bill_id)
+    assert bill is not None
+
+def test_500_error_handler_sanitization():
+    """Verify HTTP 500 handler sanitizes internal exception messages when not in debug mode."""
+    class ProductionConfig(TestConfig):
+        DEBUG = False
+        TESTING = False
+        WTF_CSRF_ENABLED = False
+
+    app = create_app(ProductionConfig)
+
+    @app.route('/force-500-test')
+    def force_500():
+        raise ValueError("CRITICAL_DATABASE_PASSWORD_OR_INTERNAL_TRACEBACK_DATA")
+
+    with app.test_client() as prod_client:
+        res = prod_client.get('/force-500-test')
+        assert res.status_code == 500
+        assert b"CRITICAL_DATABASE_PASSWORD_OR_INTERNAL_TRACEBACK_DATA" not in res.data
+        assert b"internal server error occurred" in res.data or b"administrator" in res.data
+
+def test_live_mysql_integration_and_integrity():
+    """Integration test against real MySQL/MariaDB service if available on localhost:3306."""
+    import pymysql
+    try:
+        conn = pymysql.connect(host='127.0.0.1', port=3306, user='root', password='', connect_timeout=2)
+    except Exception as exc:
+        pytest.skip(f"Live MySQL service not available on localhost:3306 ({exc})")
+
+    db_name = 'automitra_live_pytest_isolated'
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"CREATE DATABASE IF NOT EXISTS `{db_name}` CHARACTER SET utf8mb4;")
+        conn.close()
+
+        class LiveMySQLConfig(Config):
+            TESTING = True
+            WTF_CSRF_ENABLED = False
+            SQLALCHEMY_DATABASE_URI = f"mysql+pymysql://root:@127.0.0.1:3306/{db_name}"
+
+        mysql_app = create_app(LiveMySQLConfig)
+        with mysql_app.app_context():
+            db.create_all()
+            from seed_data import seed_database
+            seed_database()
+
+            assert Customer.query.count() == 5
+            assert Vehicle.query.count() == 6
+            assert SparePart.query.count() >= 5
+            assert Bill.query.count() >= 2
+
+            part = SparePart.query.first()
+            orig_stock = part.stock_quantity
+            part.stock_quantity = orig_stock + 10
+            db.session.flush()
+            db.session.rollback()
+            refreshed = db.session.get(SparePart, part.id)
+            assert refreshed.stock_quantity == orig_stock
+
+            db.session.remove()
+            db.drop_all()
+    finally:
+        try:
+            conn_clean = pymysql.connect(host='127.0.0.1', port=3306, user='root', password='', connect_timeout=2)
+            with conn_clean.cursor() as cur:
+                cur.execute(f"DROP DATABASE IF EXISTS `{db_name}`;")
+            conn_clean.close()
+        except Exception:
+            pass

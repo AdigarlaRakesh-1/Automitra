@@ -58,8 +58,12 @@ def record_payment():
         flash('Bill record not found.', 'danger')
         return redirect(url_for('billing.index'))
 
-    # Check if amount exceeds balance due
+    # Check if bill is already fully settled or amount exceeds balance due
     balance = bill.balance_due
+    if balance <= Decimal('0.00'):
+        flash(f'Invoice #{bill.invoice_number} is already fully paid. No further payments can be recorded.', 'warning')
+        return redirect(url_for('billing.view_invoice', bill_id=bill.id))
+
     if amount > balance:
         flash(f'Payment amount (₹{amount:,.2f}) cannot exceed outstanding balance (₹{balance:,.2f}).', 'warning')
         return redirect(url_for('billing.view_invoice', bill_id=bill.id))
@@ -80,7 +84,11 @@ def record_payment():
         return redirect(url_for('billing.view_invoice', bill_id=bill.id))
     except Exception as e:
         db.session.rollback()
-        flash(f'Error recording payment: {str(e)}', 'danger')
+        err_msg = str(e).lower()
+        if 'unique' in err_msg or 'duplicate' in err_msg:
+            flash(f'Payment rejected: Transaction reference "{transaction_reference}" has already been recorded.', 'danger')
+        else:
+            flash(f'Error recording payment: {str(e)}', 'danger')
         return redirect(url_for('billing.view_invoice', bill_id=bill.id))
 
 @payments_bp.route('/receipt/<int:payment_id>')

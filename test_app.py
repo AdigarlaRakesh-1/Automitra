@@ -1095,3 +1095,144 @@ def test_live_mysql_integration_and_integrity():
 
             db.session.remove()
             db.drop_all()
+
+def test_bill_deletion_rejected_when_payments_exist(client):
+    """Verify that deleting a Bill with historical payments is strictly rejected by ORM and foreign keys."""
+    from sqlalchemy.exc import IntegrityError
+    bill = Bill.query.filter(Bill.payments.any()).first()
+    assert bill is not None
+    assert len(bill.payments) > 0
+    bill_id = bill.id
+
+    with pytest.raises(IntegrityError):
+        db.session.delete(bill)
+        db.session.commit()
+    db.session.rollback()
+
+    # Confirm bill and its payments remain intact
+    persisted_bill = db.session.get(Bill, bill_id)
+    assert persisted_bill is not None
+    assert len(persisted_bill.payments) > 0
+
+def test_raw_sql_bill_deletion_rejected_by_foreign_key_restriction(client):
+    """Verify database-level ON DELETE RESTRICT on Payments.bill_id rejects raw SQL deletion."""
+    from sqlalchemy import text
+    from sqlalchemy.exc import IntegrityError
+    bill = Bill.query.filter(Bill.payments.any()).first()
+    assert bill is not None
+    bill_id = bill.id
+
+    with pytest.raises(IntegrityError):
+        db.session.execute(text("DELETE FROM Bills WHERE id = :bid"), {"bid": bill_id})
+        db.session.commit()
+    db.session.rollback()
+
+    assert db.session.get(Bill, bill_id) is not None
+
+def test_disposable_bill_without_payments_can_be_deleted(client):
+    """Verify a disposable bill with zero payments can be safely deleted without orphan restriction."""
+    # Create an unreferenced booking and bill with no payments
+    booking = ServiceBooking(
+        booking_number="BK-DISP-001",
+        customer_id=1,
+        vehicle_id=1,
+        booking_date=date.today(),
+        booking_time="10:00 AM",
+        service_type="Disposable Inspection",
+        status="Completed"
+    )
+    db.session.add(booking)
+    db.session.flush()
+
+    disposable_bill = Bill(
+        invoice_number="INV-DISP-9999",
+        booking_id=booking.id,
+        customer_id=1,
+        parts_total=Decimal('50.00'),
+        labor_total=Decimal('50.00'),
+        grand_total=Decimal('100.00'),
+        payment_status='Unpaid'
+    )
+    db.session.add(disposable_bill)
+    db.session.commit()
+    disp_id = disposable_bill.id
+
+    # Deleting the bill with 0 payments must succeed
+    db.session.delete(disposable_bill)
+    db.session.commit()
+    assert db.session.get(Bill, disp_id) is None
+
+def test_customer_and_booking_deletion_cannot_bypass_payment_safeguards(client):
+    """Verify customer and booking deletions cannot bypass historical bill/payment preservation."""
+    from sqlalchemy.exc import IntegrityError
+    bill = Bill.query.filter(Bill.payments.any()).first()
+    assert bill is not None
+    customer = db.session.get(Customer, bill.customer_id)
+    booking = db.session.get(ServiceBooking, bill.booking_id)
+
+    # Attempting to delete the customer who owns the paid bill must fail
+    with pytest.raises(IntegrityError):
+        db.session.delete(customer)
+        db.session.commit()
+    db.session.rollback()
+
+    # Attempting to delete the booking linked to the paid bill must fail
+    with pytest.raises(IntegrityError):
+        db.session.delete(booking)
+        db.session.commit()
+    db.session.rollback()
+
+    # Verify everything remains intact
+    assert db.session.get(Customer, customer.id) is not None
+    assert db.session.get(ServiceBooking, booking.id) is not None
+    assert db.session.get(Bill, bill.id) is not None
+
+def test_payment_route_rejects_settled_zero_balance_bill(client):
+    """Verify recording payment on an already fully paid/settled bill is rejected."""
+    bill = Bill.query.filter_by(payment_status='Paid').first()
+    assert bill is not None
+    assert bill.balance_due == Decimal('0.00')
+
+    res = client.post('/payments/record', data={
+        'bill_id': bill.id,
+        'amount': '10.00',
+        'payment_method': 'Cash',
+        'transaction_reference': 'SETTLED-REJECT-001'
+    }, follow_redirects=True)
+
+    assert b"is already fully paid" in res.data or b"cannot exceed outstanding balance" in res.data
+
+def test_billing_edit_route_rejects_paid_invoices(client):
+    """Verify billing edit route rejects adjusting invoices that are paid or have payments."""
+    bill = Bill.query.filter_by(payment_status='Paid').first()
+    assert bill is not None
+
+    res_get = client.get(f'/billing/{bill.id}/edit', follow_redirects=True)
+    assert b"Cannot edit an invoice that already has recorded payments or is marked Paid" in res_get.data
+
+    res_post = client.post(f'/billing/{bill.id}/edit', data={
+        'parts_total': '100.00',
+        'labor_total': '100.00',
+        'tax_amount': '0.00',
+        'discount_amount': '0.00'
+    }, follow_redirects=True)
+    assert b"Cannot edit an invoice that already has recorded payments or is marked Paid" in res_post.data
+
+def test_payment_unique_transaction_reference_db_constraint(client):
+    """Verify database-level unique constraint on Payment.transaction_reference prevents duplicates."""
+    from sqlalchemy.exc import IntegrityError
+    existing_payment = Payment.query.filter(Payment.transaction_reference != None).first()
+    assert existing_payment is not None
+    duplicate_ref = existing_payment.transaction_reference
+
+    dup_payment = Payment(
+        bill_id=existing_payment.bill_id,
+        amount=Decimal('10.00'),
+        payment_method='Cash',
+        transaction_reference=duplicate_ref,
+        payment_date=datetime.now(timezone.utc)
+    )
+    db.session.add(dup_payment)
+    with pytest.raises(IntegrityError):
+        db.session.commit()
+    db.session.rollback()

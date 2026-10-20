@@ -92,8 +92,8 @@ CREATE TABLE ServiceBookings (
     status ENUM('Pending', 'Confirmed', 'In Progress', 'Completed', 'Cancelled', 'Missed') DEFAULT 'Pending',
     notes TEXT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_booking_customer FOREIGN KEY (customer_id) REFERENCES Customers(id) ON DELETE CASCADE,
-    CONSTRAINT fk_booking_vehicle FOREIGN KEY (vehicle_id) REFERENCES Vehicles(id) ON DELETE CASCADE,
+    CONSTRAINT fk_booking_customer FOREIGN KEY (customer_id) REFERENCES Customers(id) ON DELETE RESTRICT,
+    CONSTRAINT fk_booking_vehicle FOREIGN KEY (vehicle_id) REFERENCES Vehicles(id) ON DELETE RESTRICT,
     INDEX idx_booking_date (booking_date),
     INDEX idx_booking_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -177,8 +177,8 @@ CREATE TABLE Bills (
     grand_total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     payment_status ENUM('Unpaid', 'Partially Paid', 'Paid') DEFAULT 'Unpaid',
     issued_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_bill_booking FOREIGN KEY (booking_id) REFERENCES ServiceBookings(id) ON DELETE CASCADE,
-    CONSTRAINT fk_bill_customer FOREIGN KEY (customer_id) REFERENCES Customers(id) ON DELETE CASCADE,
+    CONSTRAINT fk_bill_booking FOREIGN KEY (booking_id) REFERENCES ServiceBookings(id) ON DELETE RESTRICT,
+    CONSTRAINT fk_bill_customer FOREIGN KEY (customer_id) REFERENCES Customers(id) ON DELETE RESTRICT,
     INDEX idx_bill_invoice (invoice_number),
     INDEX idx_bill_status (payment_status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -193,10 +193,10 @@ CREATE TABLE Payments (
     bill_id INT NOT NULL,
     amount DECIMAL(10,2) NOT NULL,
     payment_method ENUM('Cash', 'Credit Card', 'Debit Card', 'UPI / Online', 'Bank Transfer') NOT NULL DEFAULT 'Cash',
-    transaction_reference VARCHAR(100) NULL,
+    transaction_reference VARCHAR(100) NULL UNIQUE,
     payment_date DATETIME DEFAULT CURRENT_TIMESTAMP,
     notes TEXT NULL,
-    CONSTRAINT fk_payment_bill FOREIGN KEY (bill_id) REFERENCES Bills(id) ON DELETE CASCADE,
+    CONSTRAINT fk_payment_bill FOREIGN KEY (bill_id) REFERENCES Bills(id) ON DELETE RESTRICT,
     INDEX idx_payment_bill (bill_id),
     INDEX idx_payment_date (payment_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

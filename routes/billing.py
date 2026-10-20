@@ -118,9 +118,9 @@ def view_invoice(bill_id):
 def edit_bill(bill_id):
     bill = db.get_or_404(Bill, bill_id)
 
-    # Prevent editing bills that already have recorded payments
-    if bill.total_paid > Decimal('0.00'):
-        flash('Cannot edit an invoice that already has recorded payments.', 'danger')
+    # Prevent editing bills that already have recorded payments or are marked Paid
+    if bill.total_paid > Decimal('0.00') or bill.payment_status == 'Paid':
+        flash('Cannot edit an invoice that already has recorded payments or is marked Paid.', 'danger')
         return redirect(url_for('billing.view_invoice', bill_id=bill.id))
 
     if request.method == 'POST':

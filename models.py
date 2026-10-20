@@ -1,9 +1,19 @@
 from datetime import datetime, date, timezone
 from decimal import Decimal
+import sqlite3
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import func
+from sqlalchemy import func, event
+from sqlalchemy.engine import Engine
 
 db = SQLAlchemy()
+
+@event.listens_for(Engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    """Enforce foreign key constraints in SQLite to match MySQL transactional integrity."""
+    if isinstance(dbapi_connection, sqlite3.Connection):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
 
 def utc_now():
     return datetime.now(timezone.utc)
@@ -116,8 +126,8 @@ class ServiceBooking(db.Model):
     
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     booking_number = db.Column(db.String(40), nullable=False, unique=True)
-    customer_id = db.Column(db.Integer, db.ForeignKey('Customers.id', ondelete='CASCADE'), nullable=False)
-    vehicle_id = db.Column(db.Integer, db.ForeignKey('Vehicles.id', ondelete='CASCADE'), nullable=False)
+    customer_id = db.Column(db.Integer, db.ForeignKey('Customers.id', ondelete='RESTRICT'), nullable=False)
+    vehicle_id = db.Column(db.Integer, db.ForeignKey('Vehicles.id', ondelete='RESTRICT'), nullable=False)
     booking_date = db.Column(db.Date, nullable=False, index=True)
     booking_time = db.Column(db.String(20), nullable=False)
     service_type = db.Column(db.String(100), nullable=False)
@@ -259,7 +269,7 @@ class Bill(db.Model):
     issued_at = db.Column(db.DateTime, default=utc_now)
     
     # Relationships
-    payments = db.relationship('Payment', backref='bill', cascade='all, delete-orphan', lazy=True)
+    payments = db.relationship('Payment', backref='bill', lazy=True)
 
     @property
     def total_paid(self):
@@ -296,10 +306,10 @@ class Payment(db.Model):
     )
     
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    bill_id = db.Column(db.Integer, db.ForeignKey('Bills.id', ondelete='CASCADE'), nullable=False)
+    bill_id = db.Column(db.Integer, db.ForeignKey('Bills.id', ondelete='RESTRICT'), nullable=False)
     amount = db.Column(db.Numeric(10, 2), nullable=False)
     payment_method = db.Column(db.String(40), nullable=False, default='Cash') # 'Cash', 'Credit Card', 'Debit Card', 'UPI / Online', 'Bank Transfer'
-    transaction_reference = db.Column(db.String(100), nullable=True)
+    transaction_reference = db.Column(db.String(100), nullable=True, unique=True, index=True)
     payment_date = db.Column(db.DateTime, default=utc_now)
     notes = db.Column(db.Text, nullable=True)
 

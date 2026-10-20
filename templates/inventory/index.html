@@ -96,6 +96,7 @@
           <td>
             <div style="display:flex; gap:6px; align-items:center;">
               <form action="{{ url_for('inventory.restock_part', part_id=p.id) }}" method="POST" style="display:flex; gap:4px;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                 <input type="number" name="quantity" value="5" min="1" class="form-control" style="width:55px; padding:3px 6px; font-size:11.5px; height:auto;">
                 <button type="submit" class="btn btn-secondary btn-sm" style="font-size:11px;" title="Add quantity to inventory">
                   +Add

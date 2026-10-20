@@ -157,6 +157,10 @@ def update_status(booking_id):
         flash(f'Invalid booking status "{new_status}".', 'danger')
         return redirect(request.referrer or url_for('bookings.view_booking', booking_id=booking.id))
 
+    if booking.bill and booking.bill.payment_status == 'Paid' and new_status != 'Completed':
+        flash('Cannot alter status of a service booking whose invoice is already paid.', 'danger')
+        return redirect(request.referrer or url_for('bookings.view_booking', booking_id=booking.id))
+
     booking.status = new_status
     # Ensure service detail exists if moving to In Progress
     if new_status == 'In Progress' and not booking.service_detail:
@@ -184,6 +188,11 @@ def update_status(booking_id):
 @bookings_bp.route('/<int:booking_id>/reschedule', methods=['POST'])
 def reschedule(booking_id):
     booking = db.get_or_404(ServiceBooking, booking_id)
+
+    if booking.status == 'Completed' or (booking.bill and booking.bill.payment_status == 'Paid'):
+        flash('Cannot reschedule a completed service booking or one with a paid invoice.', 'danger')
+        return redirect(request.referrer or url_for('bookings.view_booking', booking_id=booking.id))
+
     new_date_str = request.form.get('reschedule_date')
     new_time = request.form.get('reschedule_time')
 

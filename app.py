@@ -1,9 +1,12 @@
 import os
 import sys
 from flask import Flask, render_template
+from flask_wtf.csrf import CSRFProtect, CSRFError
 from sqlalchemy import create_engine, text
 from config import Config
 from models import db
+
+csrf = CSRFProtect()
 
 def create_app(config_class=Config):
     app = Flask(__name__)
@@ -49,6 +52,7 @@ def create_app(config_class=Config):
             )
 
     db.init_app(app)
+    csrf.init_app(app)
 
     # Register Jinja context & filters
     @app.template_filter('currency')
@@ -92,13 +96,18 @@ def create_app(config_class=Config):
     app.register_blueprint(payments_bp)
     app.register_blueprint(api_bp)
 
+    @app.errorhandler(CSRFError)
+    def handle_csrf_error(e):
+        return render_template('400.html', reason=e.description), 400
+
     @app.errorhandler(404)
     def page_not_found(e):
         return render_template('404.html'), 404
 
     @app.errorhandler(500)
     def internal_server_error(e):
-        return render_template('500.html', error=str(e)), 500
+        error_msg = str(e) if app.debug else "An unexpected internal server error occurred. Please contact the administrator."
+        return render_template('500.html', error=error_msg), 500
 
     # Auto create tables and seed only if explicitly configured
     if app.config.get('AUTO_CREATE_TABLES'):

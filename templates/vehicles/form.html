@@ -15,6 +15,7 @@
 
 <div class="card" style="max-width: 760px; margin: 0 auto;">
   <form method="POST">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
     {% if not vehicle %}
     <div class="form-group">
       <label class="form-label" for="vehicle-customer-select">Customer Owner *</label>
@@ -79,12 +80,27 @@
       </div>
     </div>
 
-    <div style="display:flex; justify-content:flex-end; gap:12px; margin-top:24px;">
-      <a href="{{ url_for('vehicles.index') }}" class="btn btn-secondary">Cancel</a>
-      <button type="submit" class="btn btn-primary" id="btn-save-vehicle">
-        Save Vehicle
-      </button>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:24px;">
+      <div>
+        {% if vehicle %}
+          <button type="submit" form="delete-vehicle-form" class="btn btn-danger btn-sm" onclick="return confirm('Are you sure you want to delete this vehicle? Recorded service history will prevent deletion.');">
+            Delete Vehicle
+          </button>
+        {% endif %}
+      </div>
+      <div style="display:flex; gap:12px;">
+        <a href="{{ url_for('vehicles.index') }}" class="btn btn-secondary">Cancel</a>
+        <button type="submit" class="btn btn-primary" id="btn-save-vehicle">
+          Save Vehicle
+        </button>
+      </div>
     </div>
   </form>
+
+  {% if vehicle %}
+  <form id="delete-vehicle-form" action="{{ url_for('vehicles.delete_vehicle', vehicle_id=vehicle.id) }}" method="POST" style="display:none;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+  </form>
+  {% endif %}
 </div>
 {% endblock %}

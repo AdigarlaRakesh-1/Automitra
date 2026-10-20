@@ -59,6 +59,7 @@
             </td>
             <td>
               <form action="{{ url_for('inventory.restock_part', part_id=p.id) }}" method="POST" style="display:flex; gap:6px;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                 <input type="number" name="quantity" value="10" min="1" class="form-control" style="width:70px; padding:4px 8px; font-size:12px;">
                 <button type="submit" class="btn btn-warning btn-sm" id="btn-restock-low-{{ p.id }}">
                   + Restock

@@ -127,7 +127,7 @@ class ServiceBooking(db.Model):
     
     # Relationships
     service_detail = db.relationship('ServiceDetail', backref='booking', uselist=False, cascade='all, delete-orphan')
-    bill = db.relationship('Bill', backref='booking', uselist=False, cascade='all, delete-orphan')
+    bill = db.relationship('Bill', backref='booking', uselist=False, lazy=True)
 
     @property
     def is_missed(self):
@@ -248,8 +248,8 @@ class Bill(db.Model):
     
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     invoice_number = db.Column(db.String(50), nullable=False, unique=True, index=True)
-    booking_id = db.Column(db.Integer, db.ForeignKey('ServiceBookings.id', ondelete='CASCADE'), nullable=False, unique=True)
-    customer_id = db.Column(db.Integer, db.ForeignKey('Customers.id', ondelete='CASCADE'), nullable=False)
+    booking_id = db.Column(db.Integer, db.ForeignKey('ServiceBookings.id', ondelete='RESTRICT'), nullable=False, unique=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey('Customers.id', ondelete='RESTRICT'), nullable=False)
     parts_total = db.Column(db.Numeric(10, 2), default=0.00)
     labor_total = db.Column(db.Numeric(10, 2), default=0.00)
     tax_amount = db.Column(db.Numeric(10, 2), default=0.00)

@@ -43,6 +43,12 @@ def record_payment():
         flash('Payment amount must be a positive number.', 'danger')
         return redirect(request.referrer or url_for('billing.index'))
 
+    if transaction_reference:
+        existing_txn = Payment.query.filter_by(transaction_reference=transaction_reference).first()
+        if existing_txn:
+            flash(f'Duplicate payment rejected: Transaction reference "{transaction_reference}" has already been processed for Payment #{existing_txn.id}.', 'danger')
+            return redirect(url_for('billing.view_invoice', bill_id=bill_id))
+
     try:
         bill = db.session.query(Bill).filter_by(id=bill_id).with_for_update().first()
     except Exception:

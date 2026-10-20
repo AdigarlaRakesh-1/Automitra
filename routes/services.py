@@ -38,7 +38,7 @@ def update_job(detail_id):
 
     try:
         raw_hours = request.form.get('labor_hours')
-        labor_hours = Decimal(str(raw_hours)) if raw_hours is not None and str(raw_hours).strip() != '' else Decimal('1.00')
+        labor_hours = Decimal(str(raw_hours)) if raw_hours is not None and str(raw_hours).strip() != '' else (job.labor_hours or Decimal('1.00'))
         if labor_hours < 0:
             flash('Labor hours cannot be negative.', 'danger')
             return redirect(url_for('services.view_job', detail_id=job.id))
@@ -48,7 +48,7 @@ def update_job(detail_id):
 
     try:
         raw_cost = request.form.get('labor_cost')
-        labor_cost = Decimal(str(raw_cost)) if raw_cost is not None and str(raw_cost).strip() != '' else Decimal('50.00')
+        labor_cost = Decimal(str(raw_cost)) if raw_cost is not None and str(raw_cost).strip() != '' else (job.labor_cost or Decimal('50.00'))
         if labor_cost < 0:
             flash('Labor cost cannot be negative.', 'danger')
             return redirect(url_for('services.view_job', detail_id=job.id))
@@ -59,6 +59,11 @@ def update_job(detail_id):
     # Protect billed jobs from labor cost modification
     if job.booking and job.booking.bill and labor_cost != job.labor_cost:
         flash('Cannot modify labor cost for a service job that has already been billed.', 'danger')
+        return redirect(url_for('services.view_job', detail_id=job.id))
+
+    # Protect paid jobs from status regression
+    if job.booking and job.booking.bill and job.booking.bill.payment_status == 'Paid' and status != 'Completed':
+        flash('Cannot alter status of a service job whose invoice is already paid.', 'danger')
         return redirect(url_for('services.view_job', detail_id=job.id))
 
     try:

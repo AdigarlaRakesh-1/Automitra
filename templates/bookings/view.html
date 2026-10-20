@@ -149,6 +149,7 @@
       </div>
 
       <form action="{{ url_for('bookings.update_status', booking_id=booking.id) }}" method="POST" style="margin-bottom:16px;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
         <label class="form-label">Update Booking Status:</label>
         <div style="display:flex; gap:8px;">
           <select name="status" class="form-control">
@@ -166,6 +167,7 @@
       <div style="border-top:1px solid var(--border-subtle); padding-top:14px;">
         <label class="form-label" style="margin-bottom:8px;">Reschedule Appointment:</label>
         <form action="{{ url_for('bookings.reschedule', booking_id=booking.id) }}" method="POST" style="display:flex; flex-direction:column; gap:8px;">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
           <input type="date" name="reschedule_date" required class="form-control">
           <select name="reschedule_time" required class="form-control">
             <option value="09:00 AM">09:00 AM</option>

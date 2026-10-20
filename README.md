@@ -119,14 +119,14 @@ http://127.0.0.1:5000
 
 ## 🧪 Automated Testing
 
-AutoMitra includes a comprehensive 49-item automated test suite covering all 9 tables, CSRF protection, concurrency safety, decimal precision accounting, restrictive foreign-key financial preservation, payment history protection, and safe real MySQL lifecycle integration:
+AutoMitra includes a comprehensive 50-item automated test suite covering all 9 tables, CSRF protection, concurrency safety, decimal precision accounting, restrictive foreign-key financial preservation, payment history protection, non-destructive migration testing, and safe real MySQL lifecycle integration:
 
 ```bash
 # Run test suite with isolated in-memory/file SQLite and live MySQL tests:
 python -m pytest test_app.py -v
 ```
 
-All 49 tests execute in ~7.1 seconds with zero deprecation warnings.
+All 50 tests execute in ~7.1 seconds with zero deprecation warnings.
 
 ---
 

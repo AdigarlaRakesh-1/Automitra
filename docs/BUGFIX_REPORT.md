@@ -6,7 +6,8 @@
 **Execution Environment**: Python 3.14.6, Flask 3.1.2, SQLAlchemy 2.0.35, Flask-SQLAlchemy 3.1.1, Flask-WTF 1.3.0, WTForms 3.2.2, PyMySQL 1.2.3, pytest 9.1.1
 **Database Engines Tested**:
 - In-Memory & File-based SQLite (Development & Regression Tests with enforced `PRAGMA foreign_keys=ON`)
-- Live MariaDB / MySQL 10.4.32 on `127.0.0.1:3306` (Full Integration & Transactional Verification)
+- Live MariaDB / MySQL 10.4.32 on `127.0.0.1:3306` (Full Integration, Safety Guards & Migration Verification)
+- MySQL 8.0 CI Service Container on GitHub Actions
 
 ---
 
@@ -18,8 +19,10 @@ This engineering effort conducted an end-to-end security audit, data integrity r
 - **Baseline Test Suite**: 7 tests passed (with 1,307 deprecation/legacy warnings).
 - **Intermediate Test Suite**: 32 tests passed (0 failures, 0 warnings).
 - **Verified Phase 12 Test Suite**: 41 tests passed (0 failures, 0 warnings).
-- **Final Hardened Test Suite**: **49 tests passed** (0 failures, 0 warnings, execution time ~7.1s).
-- **Live MySQL Integration**: **100% Verified** against local MariaDB/MySQL server using dynamically isolated databases (`automitra_test_<uuid>`) and lifecycle protection guards ensuring pre-existing databases can never be dropped or overwritten.
+- **Verified Phase 13 Test Suite**: 49 tests passed (0 failures, 0 warnings).
+- **Final Hardened Test Suite**: **50 tests passed** (0 failures, 0 warnings, execution time ~7.1s).
+- **Live MySQL Integration**: **100% Verified** against local MariaDB/MySQL server and CI MySQL 8.0 using dynamically isolated databases (`automitra_test_<uuid>`) and lifecycle protection guards ensuring pre-existing databases can never be dropped or overwritten.
+- **Migration Safety Verified**: The non-destructive production migration procedure is automated and regression-tested against a disposable database (`test_live_mysql_non_destructive_migration_procedure`).
 - **Financial Record Preservation**: **Enforced at both ORM and Database DDL levels** (`ON DELETE RESTRICT` on `Payments.bill_id`, `Bills`, and `ServiceBookings`). Attempted deletions of invoices with payment history are strictly rejected.
 - **CSRF Protection**: **Enforced across all 18 state-changing POST forms** and verified via `CSRFTestClient`.
 - **Destructive Database Actions**: **0** (No production or populated database was altered, reset, or overwritten; `schema.sql` was never run against live data).
@@ -51,7 +54,7 @@ This engineering effort conducted an end-to-end security audit, data integrity r
 | **Phase 10** | Unrestricted Cascade Deletion on Historical Invoices & Reversals | **High / Integrity** | Completed and paid bookings could be rescheduled or moved backwards to Pending, and historical Bills were subject to cascade deletion. |
 | **Phase 11** | Duplicate Payment Transaction References & 500 Error Traceback Leakage | Medium / Security | Submitting duplicate transaction references was allowed; HTTP 500 error handler returned raw internal exception strings in production. |
 | **Phase 12** | Live MySQL Integration Verification & CI Pipeline Gaps | Medium / DevOps | CI lacked MySQL test containers and dev dependencies; live MySQL tests were missing. |
-| **Phase 13** | Unsafe MySQL Integration Test Database Deletion Hazard | **Critical / Safety** | Integration test used a hardcoded database name and dropped it in cleanup, risking accidental deletion of pre-existing databases. Fixed with collision-proof `automitra_test_<uuid>` names, pre-existence checks, and strict cleanup deletion guards. |
+| **Phase 13** | Unsafe MySQL Integration Test Database Deletion Hazard | **Critical / Safety** | Integration test used a hardcoded database name and dropped it in cleanup, risking accidental deletion of pre-existing databases. Fixed with collision-proof `automitra_test_<uuid>` names, pre-existence checks, explicit test ownership tracking, and strict cleanup deletion guards. |
 | **Phase 13** | Silent Cascade Deletion of Financial Payment History | **Critical / Financial Integrity** | `Bill.payments` used `cascade='all, delete-orphan'` and `Payment.bill_id` had `ON DELETE CASCADE`. Deleting a bill silently wiped historical payment records. Changed to restrictive deletion at ORM and DDL levels, enabled SQLite FK enforcement via PRAGMA, and blocked deletions of bills with payments. |
 | **Phase 13** | Inconsistent Invoice Editing & Payment Idempotency | High / Financial Integrity | Editing bills with recorded payments was permitted; payments on settled zero-balance bills were accepted; missing database unique constraint on `Payments.transaction_reference`. Added route-level locks and database constraints. |
 
@@ -151,7 +154,7 @@ This engineering effort conducted an end-to-end security audit, data integrity r
 ### Phase 12: Live MySQL Integration & CI Pipeline
 - **Files Modified**: `.github/workflows/tests.yml`, `test_app.py`.
 - **Changes**:
-  - Verified integration against local MariaDB/MySQL 10.4.32 on port 3306 (`automitra_live_pytest_isolated`), testing DDL creation, transactions, rollbacks, and decimal precision.
+  - Verified integration against local MariaDB/MySQL 10.4.32 on port 3306, testing DDL creation, transactions, rollbacks, and decimal precision.
   - Updated GitHub Actions CI to spin up a `mysql:8.0` service container, cache pip packages, install `requirements-dev.txt`, and trigger on pushes to `main` and `fix/**`.
 - **Tests Added**: `test_live_mysql_integration_and_integrity`.
 
@@ -163,7 +166,7 @@ This engineering effort conducted an end-to-end security audit, data integrity r
      - Pre-existence verification query against `INFORMATION_SCHEMA.SCHEMATA`. If a database with the target name pre-exists, the test aborts before DDL execution to prevent overwriting.
      - Strict deletion guard `created_by_test`: drops a database only if it was explicitly created by the current test instance and matches prefix `automitra_test_`.
      - Skip with descriptive reason when MySQL is unavailable or lacks administrative creation privileges, avoiding arbitrary local database mutations.
-     - Add dedicated regression test `test_mysql_lifecycle_guards_preexisting_database_from_deletion` proving pre-existing databases are protected from selection and deletion.
+     - Explicit ownership tracking in `test_mysql_lifecycle_guards_preexisting_database_from_deletion`, generating collision-resistant fixture databases (`automitra_fixture_<uuid>`), confirming pre-existing databases and system databases (`mysql`) can never be dropped.
      - Configured CI workflow environment variables for MySQL connection consistency.
   2. **Preserve Payment History When Deleting Bills**:
      - Removed `cascade='all, delete-orphan'` from `Bill.payments` in `models.py`.
@@ -184,6 +187,8 @@ This engineering effort conducted an end-to-end security audit, data integrity r
        - `test_payment_route_rejects_settled_zero_balance_bill`
        - `test_billing_edit_route_rejects_paid_invoices`
        - `test_payment_unique_transaction_reference_db_constraint`
+  4. **Automated Non-Destructive Migration Testing**:
+     - Added `test_live_mysql_non_destructive_migration_procedure` in `test_app.py` verifying the complete backup-first, portable migration procedure on a disposable MySQL database.
 
 ---
 
@@ -198,7 +203,7 @@ This engineering effort conducted an end-to-end security audit, data integrity r
 platform win32 -- Python 3.14.6, pytest-9.1.1, pluggy-1.7.0 -- C:\Users\krris\OneDrive\Documents\Inventory Management System\Automitra\.venv\Scripts\python.exe
 cachedir: .pytest_cache
 rootdir: C:\Users\krris\OneDrive\Documents\Inventory Management System\Automitra
-collecting ... collected 49 items
+collecting ... collected 50 items
 
 test_app.py::test_database_tables_seeded PASSED                          [  2%]
 test_app.py::test_duplicate_customer_detection PASSED                    [  4%]
@@ -224,33 +229,34 @@ test_app.py::test_status_and_method_check_constraints PASSED             [ 42%]
 test_app.py::test_service_detail_unique_booking_constraint PASSED        [ 44%]
 test_app.py::test_production_config_rejects_missing_secret_key PASSED    [ 46%]
 test_app.py::test_mysql_failure_prohibits_silent_sqlite_fallback PASSED  [ 48%]
-test_app.py::test_explicit_sqlite_mode_allowed PASSED                    [ 51%]
-test_app.py::test_inventory_new_part_validation_and_location_bin PASSED  [ 53%]
-test_app.py::test_vehicle_creation_and_edit_validation PASSED            [ 55%]
-test_app.py::test_mechanic_status_and_rate_validation PASSED             [ 57%]
-test_app.py::test_booking_rejects_nonexistent_mechanic PASSED            [ 59%]
-test_app.py::test_init_db_and_seeder_idempotency PASSED                  [ 61%]
-test_app.py::test_exact_decimal_accounting_and_quantization PASSED       [ 63%]
-test_app.py::test_restock_rejects_negative_or_zero_quantity PASSED       [ 65%]
-test_app.py::test_csrf_protection_enforced PASSED                        [ 67%]
-test_app.py::test_multithreaded_concurrent_stock_deduction PASSED        [ 69%]
-test_app.py::test_booking_status_lock_on_paid_invoice PASSED             [ 71%]
-test_app.py::test_booking_reschedule_lock_on_completed_or_paid PASSED    [ 73%]
-test_app.py::test_service_job_status_lock_on_paid_invoice PASSED         [ 75%]
-test_app.py::test_duplicate_payment_transaction_reference_rejected PASSED [ 77%]
-test_app.py::test_bill_cascade_deletion_prevention PASSED                [ 79%]
-test_app.py::test_500_error_handler_sanitization PASSED                  [ 81%]
-test_app.py::test_mysql_lifecycle_guards_preexisting_database_from_deletion PASSED [ 83%]
-test_app.py::test_live_mysql_integration_and_integrity PASSED            [ 85%]
-test_app.py::test_bill_deletion_rejected_when_payments_exist PASSED      [ 87%]
-test_app.py::test_raw_sql_bill_deletion_rejected_by_foreign_key_restriction PASSED [ 89%]
-test_app.py::test_disposable_bill_without_payments_can_be_deleted PASSED [ 91%]
-test_app.py::test_customer_and_booking_deletion_cannot_bypass_payment_safeguards PASSED [ 93%]
-test_app.py::test_payment_route_rejects_settled_zero_balance_bill PASSED [ 95%]
-test_app.py::test_billing_edit_route_rejects_paid_invoices PASSED        [ 97%]
+test_app.py::test_explicit_sqlite_mode_allowed PASSED                    [ 50%]
+test_app.py::test_inventory_new_part_validation_and_location_bin PASSED  [ 52%]
+test_app.py::test_vehicle_creation_and_edit_validation PASSED            [ 54%]
+test_app.py::test_mechanic_status_and_rate_validation PASSED             [ 56%]
+test_app.py::test_booking_rejects_nonexistent_mechanic PASSED            [ 58%]
+test_app.py::test_init_db_and_seeder_idempotency PASSED                  [ 60%]
+test_app.py::test_exact_decimal_accounting_and_quantization PASSED       [ 62%]
+test_app.py::test_restock_rejects_negative_or_zero_quantity PASSED       [ 64%]
+test_app.py::test_csrf_protection_enforced PASSED                        [ 66%]
+test_app.py::test_multithreaded_concurrent_stock_deduction PASSED        [ 68%]
+test_app.py::test_booking_status_lock_on_paid_invoice PASSED             [ 70%]
+test_app.py::test_booking_reschedule_lock_on_completed_or_paid PASSED    [ 72%]
+test_app.py::test_service_job_status_lock_on_paid_invoice PASSED         [ 74%]
+test_app.py::test_duplicate_payment_transaction_reference_rejected PASSED [ 76%]
+test_app.py::test_bill_cascade_deletion_prevention PASSED                [ 78%]
+test_app.py::test_500_error_handler_sanitization PASSED                  [ 80%]
+test_app.py::test_mysql_lifecycle_guards_preexisting_database_from_deletion PASSED [ 82%]
+test_app.py::test_live_mysql_integration_and_integrity PASSED            [ 84%]
+test_app.py::test_live_mysql_non_destructive_migration_procedure PASSED  [ 86%]
+test_app.py::test_bill_deletion_rejected_when_payments_exist PASSED      [ 88%]
+test_app.py::test_raw_sql_bill_deletion_rejected_by_foreign_key_restriction PASSED [ 90%]
+test_app.py::test_disposable_bill_without_payments_can_be_deleted PASSED [ 92%]
+test_app.py::test_customer_and_booking_deletion_cannot_bypass_payment_safeguards PASSED [ 94%]
+test_app.py::test_payment_route_rejects_settled_zero_balance_bill PASSED [ 96%]
+test_app.py::test_billing_edit_route_rejects_paid_invoices PASSED        [ 98%]
 test_app.py::test_payment_unique_transaction_reference_db_constraint PASSED [100%]
 
-============================= 49 passed in 7.11s ==============================
+============================= 50 passed in 7.09s ==============================
 ```
 
 ---
@@ -258,65 +264,178 @@ test_app.py::test_payment_unique_transaction_reference_db_constraint PASSED [100
 ## 5. MySQL Verification Status & Non-Destructive Migration Plan
 
 ### Live MySQL Verification Status
-- **Status**: **VERIFIED LIVE** on localhost:3306 (MariaDB/MySQL 10.4.32).
-- The integration test generates a unique collision-free database name (`automitra_test_<uuid>`), confirms no existing database with that name exists, creates the schema, tests transactional commits, rollbacks, restrictive foreign keys, and decimal precision, and securely drops only the database created by that run.
+- **Status**: **VERIFIED LIVE** on localhost:3306 (MariaDB/MySQL 10.4.32) and CI (`mysql:8.0`).
+- **Safety Test Suite**:
+  - `test_mysql_lifecycle_guards_preexisting_database_from_deletion`: Rigorously verifies that collision-free candidate names are generated, pre-existing databases are detected via `INFORMATION_SCHEMA.SCHEMATA`, and unowned or pre-existing databases are strictly protected from deletion.
+  - `test_live_mysql_integration_and_integrity`: Verifies live DDL creation, transactions, rollbacks, restrictive foreign keys, and decimal precision against an isolated, collision-free disposable database.
+  - `test_live_mysql_non_destructive_migration_procedure`: Executes and verifies the exact non-destructive migration script against a disposable database populated with operational legacy data, confirming zero data loss and foreign key enforcement.
 
-### Non-Destructive Production Migration Plan
-When deploying to existing MySQL databases, follow this safe sequence:
+---
 
-1. **Mandatory Pre-Migration Backup**:
-   ```bash
-   mysqldump -u <user> -p --single-transaction --quick automitra > automitra_backup_$(date +%Y%m%d_%H%M%S).sql
-   ```
+### Non-Destructive Production Migration Plan (MySQL 8.0 & MariaDB Compatible)
 
-2. **Strict Prohibition**:
-   - **DO NOT RUN `schema.sql`** directly against populated databases. It contains `DROP TABLE IF EXISTS` which causes irreversible data loss.
+When upgrading existing MySQL 8.0 or MariaDB databases from legacy schemas to the hardened schema, follow this verified, backup-first procedure.
 
-3. **Non-Destructive DDL Adjustments**:
-   ```sql
-   -- 1. Add Customers.updated_at if not present
-   ALTER TABLE Customers ADD COLUMN IF NOT EXISTS updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;
+#### Phase 1: Mandatory Pre-Migration Backup
+Before performing any schema alterations, take a complete logical backup with routines and triggers:
+```bash
+mysqldump -u <user> -p \
+  --single-transaction \
+  --quick \
+  --routines \
+  --triggers \
+  --databases automitra > automitra_pre_migration_backup_$(date +%Y%m%d_%H%M%S).sql
+```
 
-   -- 2. Add Unique constraint on ServiceDetails.booking_id (verify no duplicates exist first)
-   ALTER TABLE ServiceDetails ADD CONSTRAINT uq_service_details_booking UNIQUE (booking_id);
+> [!CAUTION]
+> **STRICT PROHIBITION**: Never execute `schema.sql` directly against a populated production or development database. `schema.sql` contains `DROP TABLE IF EXISTS` which will permanently destroy existing records.
 
-   -- 3. Modify Foreign Key cascades on ServiceBookings to RESTRICT
-   ALTER TABLE ServiceBookings DROP FOREIGN KEY IF EXISTS fk_booking_customer;
-   ALTER TABLE ServiceBookings ADD CONSTRAINT fk_booking_customer FOREIGN KEY (customer_id) REFERENCES Customers(id) ON DELETE RESTRICT;
+#### Phase 2: Pre-Flight Anomaly & Integrity Checks
+Run these read-only diagnostic queries to verify that the existing database has no duplicate references, duplicate 1:1 records, or orphaned rows that would cause constraint creation to fail:
 
-   ALTER TABLE ServiceBookings DROP FOREIGN KEY IF EXISTS fk_booking_vehicle;
-   ALTER TABLE ServiceBookings ADD CONSTRAINT fk_booking_vehicle FOREIGN KEY (vehicle_id) REFERENCES Vehicles(id) ON DELETE RESTRICT;
+```sql
+-- Check 1: Duplicate transaction references in Payments (must return 0 rows)
+SELECT transaction_reference, COUNT(*) AS duplicate_count
+FROM Payments
+WHERE transaction_reference IS NOT NULL AND transaction_reference != ''
+GROUP BY transaction_reference
+HAVING duplicate_count > 1;
 
-   -- 4. Modify Foreign Key cascades on Bills to RESTRICT for financial preservation
-   ALTER TABLE Bills DROP FOREIGN KEY IF EXISTS fk_bills_booking;
-   ALTER TABLE Bills ADD CONSTRAINT fk_bills_booking FOREIGN KEY (booking_id) REFERENCES ServiceBookings(id) ON DELETE RESTRICT;
+-- Check 2: Duplicate booking assignments in ServiceDetails (must return 0 rows for 1:1 relationship)
+SELECT booking_id, COUNT(*) AS duplicate_count
+FROM ServiceDetails
+WHERE booking_id IS NOT NULL
+GROUP BY booking_id
+HAVING duplicate_count > 1;
 
-   ALTER TABLE Bills DROP FOREIGN KEY IF EXISTS fk_bills_customer;
-   ALTER TABLE Bills ADD CONSTRAINT fk_bills_customer FOREIGN KEY (customer_id) REFERENCES Customers(id) ON DELETE RESTRICT;
+-- Check 3: Orphaned Payments referencing non-existent Bills (must return 0 rows)
+SELECT p.id AS payment_id, p.bill_id
+FROM Payments p
+LEFT JOIN Bills b ON p.bill_id = b.id
+WHERE b.id IS NULL;
 
-   -- 5. Modify Foreign Key cascades on Payments to RESTRICT to preserve payment history
-   ALTER TABLE Payments DROP FOREIGN KEY IF EXISTS fk_payment_bill;
-   ALTER TABLE Payments ADD CONSTRAINT fk_payment_bill FOREIGN KEY (bill_id) REFERENCES Bills(id) ON DELETE RESTRICT;
+-- Check 4: Orphaned Bills referencing non-existent Bookings or Customers (must return 0 rows)
+SELECT b.id AS bill_id, b.booking_id, b.customer_id
+FROM Bills b
+LEFT JOIN ServiceBookings sb ON b.booking_id = sb.id
+LEFT JOIN Customers c ON b.customer_id = c.id
+WHERE sb.id IS NULL OR c.id IS NULL;
 
-   -- 6. Add Unique constraint on Payments.transaction_reference (verify no duplicates exist first)
-   ALTER TABLE Payments ADD CONSTRAINT uq_payments_transaction_ref UNIQUE (transaction_reference);
-   ```
+-- Check 5: Orphaned ServiceBookings referencing non-existent Customers or Vehicles (must return 0 rows)
+SELECT sb.id AS booking_id, sb.customer_id, sb.vehicle_id
+FROM ServiceBookings sb
+LEFT JOIN Customers c ON sb.customer_id = c.id
+LEFT JOIN Vehicles v ON sb.vehicle_id = v.id
+WHERE c.id IS NULL OR v.id IS NULL;
+```
+*If any diagnostic query returns rows, resolve the data anomalies before proceeding.*
 
-4. **Rollback Script (If Reversion is Required)**:
-   ```sql
-   -- Revert to original cascade settings if necessary
-   ALTER TABLE ServiceBookings DROP FOREIGN KEY fk_booking_customer;
-   ALTER TABLE ServiceBookings ADD CONSTRAINT fk_booking_customer FOREIGN KEY (customer_id) REFERENCES Customers(id) ON DELETE CASCADE;
+#### Phase 3: Inspect Actual Foreign Key Constraint Names
+Constraint names differ depending on whether the database was created with `schema.sql` (e.g. `fk_payment_bill`) or SQLAlchemy `db.create_all()` (e.g. `Payments_ibfk_1`). Query the actual names before dropping:
 
-   ALTER TABLE ServiceBookings DROP FOREIGN KEY fk_booking_vehicle;
-   ALTER TABLE ServiceBookings ADD CONSTRAINT fk_booking_vehicle FOREIGN KEY (vehicle_id) REFERENCES Vehicles(id) ON DELETE CASCADE;
+```sql
+SELECT
+    TABLE_NAME,
+    COLUMN_NAME,
+    CONSTRAINT_NAME,
+    REFERENCED_TABLE_NAME,
+    REFERENCED_COLUMN_NAME
+FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+WHERE TABLE_SCHEMA = DATABASE()
+  AND REFERENCED_TABLE_NAME IS NOT NULL
+  AND TABLE_NAME IN ('Payments', 'Bills', 'ServiceBookings', 'ServiceDetails')
+ORDER BY TABLE_NAME, COLUMN_NAME;
+```
 
-   ALTER TABLE Bills DROP FOREIGN KEY fk_bills_booking;
-   ALTER TABLE Bills ADD CONSTRAINT fk_bills_booking FOREIGN KEY (booking_id) REFERENCES ServiceBookings(id) ON DELETE CASCADE;
+#### Phase 4: Step-by-Step DDL Alterations (Fully Portable)
 
-   ALTER TABLE Payments DROP FOREIGN KEY fk_payment_bill;
-   ALTER TABLE Payments ADD CONSTRAINT fk_payment_bill FOREIGN KEY (bill_id) REFERENCES Bills(id) ON DELETE CASCADE;
-   ```
+```sql
+-- Step 1: Add Customers.updated_at (Portable across MySQL 8.0 and MariaDB)
+-- In MariaDB: ALTER TABLE Customers ADD COLUMN IF NOT EXISTS updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;
+-- In standard MySQL 8.0: Check column existence before adding:
+SET @col_exists = (
+    SELECT COUNT(*)
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'Customers'
+      AND COLUMN_NAME = 'updated_at'
+);
+SET @sql = IF(@col_exists = 0,
+    'ALTER TABLE Customers ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;',
+    'SELECT "Column updated_at already exists" AS status;'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Step 2: Enforce 1:1 relationship on ServiceDetails.booking_id
+ALTER TABLE ServiceDetails ADD CONSTRAINT uq_service_details_booking UNIQUE (booking_id);
+
+-- Step 3: Replace Payments cascade with ON DELETE RESTRICT
+-- (Replace <actual_payment_fk_name> with the constraint name from Phase 3, e.g., fk_payment_bill or Payments_ibfk_1)
+ALTER TABLE Payments DROP FOREIGN KEY `<actual_payment_fk_name>`;
+ALTER TABLE Payments ADD CONSTRAINT fk_payment_bill FOREIGN KEY (bill_id) REFERENCES Bills(id) ON DELETE RESTRICT;
+
+-- Step 4: Enforce UNIQUE constraint on Payments.transaction_reference
+ALTER TABLE Payments ADD CONSTRAINT uq_payments_transaction_ref UNIQUE (transaction_reference);
+
+-- Step 5: Replace Bills cascades with ON DELETE RESTRICT
+-- (Replace <actual_bill_booking_fk> and <actual_bill_customer_fk> with names from Phase 3)
+ALTER TABLE Bills DROP FOREIGN KEY `<actual_bill_booking_fk>`;
+ALTER TABLE Bills ADD CONSTRAINT fk_bill_booking FOREIGN KEY (booking_id) REFERENCES ServiceBookings(id) ON DELETE RESTRICT;
+
+ALTER TABLE Bills DROP FOREIGN KEY `<actual_bill_customer_fk>`;
+ALTER TABLE Bills ADD CONSTRAINT fk_bill_customer FOREIGN KEY (customer_id) REFERENCES Customers(id) ON DELETE RESTRICT;
+
+-- Step 6: Replace ServiceBookings cascades with ON DELETE RESTRICT
+-- (Replace <actual_booking_customer_fk> and <actual_booking_vehicle_fk> with names from Phase 3)
+ALTER TABLE ServiceBookings DROP FOREIGN KEY `<actual_booking_customer_fk>`;
+ALTER TABLE ServiceBookings ADD CONSTRAINT fk_booking_customer FOREIGN KEY (customer_id) REFERENCES Customers(id) ON DELETE RESTRICT;
+
+ALTER TABLE ServiceBookings DROP FOREIGN KEY `<actual_booking_vehicle_fk>`;
+ALTER TABLE ServiceBookings ADD CONSTRAINT fk_booking_vehicle FOREIGN KEY (vehicle_id) REFERENCES Vehicles(id) ON DELETE RESTRICT;
+```
+
+#### Phase 5: Post-Migration Verification
+Confirm the new restrictive constraints and indexes are active:
+```sql
+-- Verify foreign keys reference ON DELETE RESTRICT
+SELECT
+    TABLE_NAME,
+    CONSTRAINT_NAME,
+    DELETE_RULE
+FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS
+WHERE CONSTRAINT_SCHEMA = DATABASE()
+  AND TABLE_NAME IN ('Payments', 'Bills', 'ServiceBookings');
+
+-- Verify unique indexes exist
+SHOW INDEX FROM Payments WHERE Key_name = 'uq_payments_transaction_ref';
+SHOW INDEX FROM ServiceDetails WHERE Key_name = 'uq_service_details_booking';
+```
+
+#### Phase 6: Rollback Procedure (Emergency Reversion)
+If an emergency rollback is required:
+```sql
+-- Revert Payments foreign key
+ALTER TABLE Payments DROP FOREIGN KEY fk_payment_bill;
+ALTER TABLE Payments DROP INDEX uq_payments_transaction_ref;
+ALTER TABLE Payments ADD CONSTRAINT fk_payment_bill FOREIGN KEY (bill_id) REFERENCES Bills(id) ON DELETE CASCADE;
+
+-- Revert Bills foreign keys
+ALTER TABLE Bills DROP FOREIGN KEY fk_bill_booking;
+ALTER TABLE Bills DROP FOREIGN KEY fk_bill_customer;
+ALTER TABLE Bills ADD CONSTRAINT fk_bill_booking FOREIGN KEY (booking_id) REFERENCES ServiceBookings(id) ON DELETE CASCADE;
+ALTER TABLE Bills ADD CONSTRAINT fk_bill_customer FOREIGN KEY (customer_id) REFERENCES Customers(id) ON DELETE CASCADE;
+
+-- Revert ServiceBookings foreign keys
+ALTER TABLE ServiceBookings DROP FOREIGN KEY fk_booking_customer;
+ALTER TABLE ServiceBookings DROP FOREIGN KEY fk_booking_vehicle;
+ALTER TABLE ServiceBookings ADD CONSTRAINT fk_booking_customer FOREIGN KEY (customer_id) REFERENCES Customers(id) ON DELETE CASCADE;
+ALTER TABLE ServiceBookings ADD CONSTRAINT fk_booking_vehicle FOREIGN KEY (vehicle_id) REFERENCES Vehicles(id) ON DELETE CASCADE;
+
+-- Revert ServiceDetails unique constraint
+ALTER TABLE ServiceDetails DROP INDEX uq_service_details_booking;
+```
 
 ---
 

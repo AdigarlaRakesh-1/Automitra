@@ -970,15 +970,18 @@ class SafeMySQLTestDatabase:
             connect_timeout=3
         )
 
-    def __enter__(self):
+    def generate_candidate_name(self):
         import uuid
+        return f"{self.prefix}{uuid.uuid4().hex[:12]}"
+
+    def __enter__(self):
         try:
             self._admin_conn = self.connect_admin()
         except Exception as exc:
             pytest.skip(f"Live MySQL test service unavailable at {self.host}:{self.port} ({exc})")
 
         # Generate a unique, collision-free database name
-        candidate = f"{self.prefix}{uuid.uuid4().hex[:12]}"
+        candidate = self.generate_candidate_name()
 
         with self._admin_conn.cursor() as cur:
             cur.execute("SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = %s", (candidate,))
@@ -1020,48 +1023,68 @@ class SafeMySQLTestDatabase:
 def test_mysql_lifecycle_guards_preexisting_database_from_deletion():
     """Verify SafeMySQLTestDatabase strictly protects pre-existing databases and never drops them."""
     import pymysql
+    import uuid
+
+    mgr_probe = SafeMySQLTestDatabase()
     try:
-        conn = pymysql.connect(host='127.0.0.1', port=3306, user='root', password='', connect_timeout=2)
+        conn = mgr_probe.connect_admin()
     except Exception as exc:
-        pytest.skip(f"Live MySQL service not available on localhost:3306 ({exc})")
+        pytest.skip(f"Live MySQL service not available on {mgr_probe.host}:{mgr_probe.port} ({exc})")
 
-    dummy_existing_db = "automitra_dummy_preexisting_db"
-    with conn.cursor() as cur:
-        cur.execute(f"CREATE DATABASE IF NOT EXISTS `{dummy_existing_db}` CHARACTER SET utf8mb4;")
-    conn.close()
+    # 1. Generate a collision-resistant, unique test database name
+    unique_preexisting_name = f"automitra_fixture_{uuid.uuid4().hex[:12]}"
+    fixture_created_by_test = False
 
     try:
-        # 1. Attempt to create a test DB using an already existing name must fail
-        mgr = SafeMySQLTestDatabase(prefix=dummy_existing_db)
-        mgr._admin_conn = mgr.connect_admin()
-        # Manually verify that candidate collision check blocks creation
-        with pytest.raises(RuntimeError, match="Safety violation"):
-            with mgr._admin_conn.cursor() as cur:
-                # Force candidate to match the pre-existing DB
-                candidate = dummy_existing_db
-                cur.execute("SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = %s", (candidate,))
-                if cur.fetchone():
-                    raise RuntimeError(f"Safety violation: candidate test database '{candidate}' already exists!")
+        with conn.cursor() as cur:
+            cur.execute("SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = %s", (unique_preexisting_name,))
+            if cur.fetchone() is not None:
+                raise RuntimeError(f"Safety violation: fixture candidate '{unique_preexisting_name}' already exists!")
+            cur.execute(f"CREATE DATABASE `{unique_preexisting_name}` CHARACTER SET utf8mb4;")
+            fixture_created_by_test = True
 
-        mgr._admin_conn.close()
+        # 2. Test candidate collision check: SafeMySQLTestDatabase aborts if DB already exists
+        colliding_mgr = SafeMySQLTestDatabase(prefix=unique_preexisting_name)
+        colliding_mgr.generate_candidate_name = lambda: unique_preexisting_name
 
-        # 2. Verify __exit__ refuses to drop a DB if created_by_test is False
+        with pytest.raises(RuntimeError, match="Safety violation: candidate test database .* already exists"):
+            colliding_mgr.__enter__()
+
+        # Ensure colliding_mgr did not claim ownership or set db_name
+        assert colliding_mgr.created_by_test is False
+        assert colliding_mgr.db_name is None
+
+        # 3. Test that SafeMySQLTestDatabase.__exit__ refuses to drop an existing database
+        # Even if db_name was set to the existing DB, created_by_test is False -> DO NOT DROP
         unauthorized_mgr = SafeMySQLTestDatabase()
-        unauthorized_mgr.db_name = dummy_existing_db
+        unauthorized_mgr.db_name = unique_preexisting_name
         unauthorized_mgr.created_by_test = False
         unauthorized_mgr.__exit__(None, None, None)
 
-        # Confirm the pre-existing database was NOT dropped
-        verify_conn = pymysql.connect(host='127.0.0.1', port=3306, user='root', password='')
-        with verify_conn.cursor() as cur:
-            cur.execute("SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = %s", (dummy_existing_db,))
-            assert cur.fetchone() is not None, "Pre-existing database must never be dropped!"
-        verify_conn.close()
+        # 4. Test prefix guard: even if created_by_test was True, non-prefix DBs are never dropped
+        unauthorized_sys_mgr = SafeMySQLTestDatabase(prefix="automitra_test_")
+        unauthorized_sys_mgr.db_name = "mysql"
+        unauthorized_sys_mgr.created_by_test = True
+        unauthorized_sys_mgr.__exit__(None, None, None)
+
+        # 5. Confirm both the fixture database and system databases remain completely intact
+        with conn.cursor() as cur:
+            cur.execute("SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = %s", (unique_preexisting_name,))
+            assert cur.fetchone() is not None, "Pre-existing fixture database must never be deleted!"
+
+            cur.execute("SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = 'mysql'")
+            assert cur.fetchone() is not None, "System database 'mysql' must never be deleted!"
+
     finally:
-        clean_conn = pymysql.connect(host='127.0.0.1', port=3306, user='root', password='')
-        with clean_conn.cursor() as cur:
-            cur.execute(f"DROP DATABASE IF EXISTS `{dummy_existing_db}`;")
-        clean_conn.close()
+        # Drop ONLY the specific database explicitly created by this test run
+        if fixture_created_by_test:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(f"DROP DATABASE IF EXISTS `{unique_preexisting_name}`;")
+            except Exception:
+                pass
+        conn.close()
+
 
 def test_live_mysql_integration_and_integrity():
     """Integration test against dynamically provisioned, collision-free MySQL test database."""
@@ -1095,6 +1118,188 @@ def test_live_mysql_integration_and_integrity():
 
             db.session.remove()
             db.drop_all()
+
+def test_live_mysql_non_destructive_migration_procedure():
+    """Verify the documented non-destructive migration procedure against a disposable MySQL database.
+    Tests:
+    1. Pre-migration integrity checks (duplicate references, orphaned child records).
+    2. Portable column addition (Customers.updated_at).
+    3. Dynamic discovery of actual foreign key constraint names via INFORMATION_SCHEMA.
+    4. Portable ALTER TABLE DROP FOREIGN KEY and replacement with ON DELETE RESTRICT.
+    5. UNIQUE constraint enforcement on Payment.transaction_reference.
+    6. Proof of restrictive deletion on migrated bills and duplicate rejection without data loss.
+    """
+    import pymysql
+    with SafeMySQLTestDatabase() as test_db:
+        conn = pymysql.connect(
+            host=test_db.host,
+            port=test_db.port,
+            user=test_db.user,
+            password=test_db.password,
+            database=test_db.db_name
+        )
+        with conn.cursor() as cur:
+            # 1. Setup simulated legacy schema (with CASCADE foreign keys and missing updated_at)
+            cur.execute("""
+                CREATE TABLE Customers (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    name VARCHAR(100) NOT NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+            cur.execute("""
+                CREATE TABLE Vehicles (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    customer_id INT NOT NULL,
+                    license_plate VARCHAR(50) NOT NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+            cur.execute("""
+                CREATE TABLE ServiceBookings (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    customer_id INT NOT NULL,
+                    vehicle_id INT NOT NULL,
+                    status VARCHAR(50) DEFAULT 'Pending',
+                    CONSTRAINT fk_bk_cust FOREIGN KEY (customer_id) REFERENCES Customers(id) ON DELETE CASCADE,
+                    CONSTRAINT fk_bk_veh FOREIGN KEY (vehicle_id) REFERENCES Vehicles(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+            cur.execute("""
+                CREATE TABLE ServiceDetails (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    booking_id INT NOT NULL,
+                    job_description TEXT NOT NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+            cur.execute("""
+                CREATE TABLE Bills (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    booking_id INT NOT NULL,
+                    customer_id INT NOT NULL,
+                    grand_total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+                    payment_status VARCHAR(50) DEFAULT 'Unpaid',
+                    CONSTRAINT fk_bill_bk FOREIGN KEY (booking_id) REFERENCES ServiceBookings(id) ON DELETE CASCADE,
+                    CONSTRAINT fk_bill_cust FOREIGN KEY (customer_id) REFERENCES Customers(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+            cur.execute("""
+                CREATE TABLE Payments (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    bill_id INT NOT NULL,
+                    amount DECIMAL(10,2) NOT NULL,
+                    transaction_reference VARCHAR(100) NULL,
+                    CONSTRAINT fk_pay_bill FOREIGN KEY (bill_id) REFERENCES Bills(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+
+            # Seed sample operational legacy data
+            cur.execute("INSERT INTO Customers (name) VALUES ('Test Owner')")
+            cust_id = cur.lastrowid
+            cur.execute("INSERT INTO Vehicles (customer_id, license_plate) VALUES (%s, 'DL-01-AB-1234')", (cust_id,))
+            veh_id = cur.lastrowid
+            cur.execute("INSERT INTO ServiceBookings (customer_id, vehicle_id, status) VALUES (%s, %s, 'Completed')", (cust_id, veh_id))
+            book_id = cur.lastrowid
+            cur.execute("INSERT INTO ServiceDetails (booking_id, job_description) VALUES (%s, 'Standard Service')", (book_id,))
+            cur.execute("INSERT INTO Bills (booking_id, customer_id, grand_total, payment_status) VALUES (%s, %s, 1500.00, 'Paid')", (book_id, cust_id))
+            bill_id = cur.lastrowid
+            cur.execute("INSERT INTO Payments (bill_id, amount, transaction_reference) VALUES (%s, 1500.00, 'TXN-MIG-001')", (bill_id,))
+
+            # 2. Run Pre-Migration Validation Queries
+            # Check A: duplicate transaction references
+            cur.execute("""
+                SELECT transaction_reference, COUNT(*) AS cnt
+                FROM Payments
+                WHERE transaction_reference IS NOT NULL AND transaction_reference != ''
+                GROUP BY transaction_reference
+                HAVING cnt > 1;
+            """)
+            assert len(cur.fetchall()) == 0, "Pre-migration check: duplicate transaction references detected!"
+
+            # Check B: duplicate service detail bookings
+            cur.execute("""
+                SELECT booking_id, COUNT(*) AS cnt
+                FROM ServiceDetails
+                WHERE booking_id IS NOT NULL
+                GROUP BY booking_id
+                HAVING cnt > 1;
+            """)
+            assert len(cur.fetchall()) == 0, "Pre-migration check: duplicate booking IDs in ServiceDetails!"
+
+            # Check C: orphaned payment records
+            cur.execute("""
+                SELECT p.id, p.bill_id
+                FROM Payments p
+                LEFT JOIN Bills b ON p.bill_id = b.id
+                WHERE b.id IS NULL;
+            """)
+            assert len(cur.fetchall()) == 0, "Pre-migration check: orphaned payments detected!"
+
+            # 3. Apply Non-Destructive DDL Adjustments
+            # Step A: Conditionally add Customers.updated_at if missing
+            cur.execute("""
+                SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'Customers' AND COLUMN_NAME = 'updated_at'
+            """, (test_db.db_name,))
+            if cur.fetchone()[0] == 0:
+                cur.execute("ALTER TABLE Customers ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;")
+
+            # Step B: Add 1:1 unique constraint on ServiceDetails.booking_id
+            cur.execute("ALTER TABLE ServiceDetails ADD CONSTRAINT uq_service_details_booking UNIQUE (booking_id);")
+
+            # Step C: Discover actual constraint names dynamically
+            def get_fk_constraint(tbl, col):
+                cur.execute("""
+                    SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+                    WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND COLUMN_NAME = %s AND REFERENCED_TABLE_NAME IS NOT NULL
+                """, (test_db.db_name, tbl, col))
+                row = cur.fetchone()
+                return row[0] if row else None
+
+            # Migrate Payments foreign key to ON DELETE RESTRICT
+            pay_fk = get_fk_constraint('Payments', 'bill_id')
+            assert pay_fk is not None
+            cur.execute(f"ALTER TABLE Payments DROP FOREIGN KEY `{pay_fk}`;")
+            cur.execute("ALTER TABLE Payments ADD CONSTRAINT fk_payment_bill FOREIGN KEY (bill_id) REFERENCES Bills(id) ON DELETE RESTRICT;")
+
+            # Migrate Bills foreign keys to ON DELETE RESTRICT
+            bill_bk_fk = get_fk_constraint('Bills', 'booking_id')
+            cur.execute(f"ALTER TABLE Bills DROP FOREIGN KEY `{bill_bk_fk}`;")
+            cur.execute("ALTER TABLE Bills ADD CONSTRAINT fk_bill_booking FOREIGN KEY (booking_id) REFERENCES ServiceBookings(id) ON DELETE RESTRICT;")
+
+            bill_cust_fk = get_fk_constraint('Bills', 'customer_id')
+            cur.execute(f"ALTER TABLE Bills DROP FOREIGN KEY `{bill_cust_fk}`;")
+            cur.execute("ALTER TABLE Bills ADD CONSTRAINT fk_bill_customer FOREIGN KEY (customer_id) REFERENCES Customers(id) ON DELETE RESTRICT;")
+
+            # Migrate ServiceBookings foreign keys to ON DELETE RESTRICT
+            bk_cust_fk = get_fk_constraint('ServiceBookings', 'customer_id')
+            cur.execute(f"ALTER TABLE ServiceBookings DROP FOREIGN KEY `{bk_cust_fk}`;")
+            cur.execute("ALTER TABLE ServiceBookings ADD CONSTRAINT fk_booking_customer FOREIGN KEY (customer_id) REFERENCES Customers(id) ON DELETE RESTRICT;")
+
+            bk_veh_fk = get_fk_constraint('ServiceBookings', 'vehicle_id')
+            cur.execute(f"ALTER TABLE ServiceBookings DROP FOREIGN KEY `{bk_veh_fk}`;")
+            cur.execute("ALTER TABLE ServiceBookings ADD CONSTRAINT fk_booking_vehicle FOREIGN KEY (vehicle_id) REFERENCES Vehicles(id) ON DELETE RESTRICT;")
+
+            # Step D: Add UNIQUE constraint on Payments.transaction_reference
+            cur.execute("ALTER TABLE Payments ADD CONSTRAINT uq_payments_transaction_ref UNIQUE (transaction_reference);")
+
+            # 4. Verify Post-Migration Restrictive Safeguards
+            # A: Deleting bill with recorded payments MUST fail with FK restriction (errno 1451)
+            import pymysql.err
+            with pytest.raises(pymysql.err.IntegrityError) as exc_info:
+                cur.execute("DELETE FROM Bills WHERE id = %s", (bill_id,))
+            assert exc_info.value.args[0] == 1451, "Expected MySQL foreign key restriction error code 1451"
+
+            # B: Inserting duplicate transaction reference MUST fail with unique violation (errno 1062)
+            with pytest.raises(pymysql.err.IntegrityError) as exc_info:
+                cur.execute("INSERT INTO Payments (bill_id, amount, transaction_reference) VALUES (%s, 10.00, 'TXN-MIG-001')", (bill_id,))
+            assert exc_info.value.args[0] == 1062, "Expected MySQL unique constraint error code 1062"
+
+            # C: Verify all data remains intact with 0 data loss
+            cur.execute("SELECT COUNT(*) FROM Customers")
+            assert cur.fetchone()[0] == 1
+            cur.execute("SELECT COUNT(*) FROM Payments")
+            assert cur.fetchone()[0] == 1
+
+        conn.close()
 
 def test_bill_deletion_rejected_when_payments_exist(client):
     """Verify that deleting a Bill with historical payments is strictly rejected by ORM and foreign keys."""

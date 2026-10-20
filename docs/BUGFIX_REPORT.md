@@ -5,20 +5,22 @@
 **Target / Base Branch**: `main`  
 **Execution Environment**: Python 3.14.6, Flask 3.1.2, SQLAlchemy 2.0.35, Flask-SQLAlchemy 3.1.1, Flask-WTF 1.3.0, WTForms 3.2.2, PyMySQL 1.2.3, pytest 9.1.1
 **Database Engines Tested**:
-- In-Memory & File-based SQLite (Development & Regression Tests)
+- In-Memory & File-based SQLite (Development & Regression Tests with enforced `PRAGMA foreign_keys=ON`)
 - Live MariaDB / MySQL 10.4.32 on `127.0.0.1:3306` (Full Integration & Transactional Verification)
 
 ---
 
 ## 1. Executive Summary
 
-This engineering effort conducted an end-to-end security audit, data integrity reinforcement, and comprehensive test suite expansion of the **AutoMitra** Vehicle Service Center Management System. Across 12 methodical phases, every confirmed vulnerability, concurrency race condition, financial calculation loophole, database inconsistency, CSRF gap, and cascade deletion hazard was resolved, verified through regression tests, and cleanly committed to `fix/critical-validation-and-integrity`.
+This engineering effort conducted an end-to-end security audit, data integrity reinforcement, and comprehensive test suite expansion of the **AutoMitra** Vehicle Service Center Management System. Across 13 methodical phases, every confirmed vulnerability, concurrency race condition, financial calculation loophole, database inconsistency, CSRF gap, cascade deletion hazard, and test lifecycle safety risk was resolved, verified through regression tests, and cleanly committed to `fix/critical-validation-and-integrity`.
 
 ### Key Metrics
 - **Baseline Test Suite**: 7 tests passed (with 1,307 deprecation/legacy warnings).
 - **Intermediate Test Suite**: 32 tests passed (0 failures, 0 warnings).
-- **Final Test Suite**: **41 tests passed** (0 failures, 0 warnings, execution time ~7.3s).
-- **Live MySQL Integration**: **100% Verified** against local MariaDB/MySQL server (`automitra_live_pytest_isolated`).
+- **Verified Phase 12 Test Suite**: 41 tests passed (0 failures, 0 warnings).
+- **Final Hardened Test Suite**: **49 tests passed** (0 failures, 0 warnings, execution time ~7.1s).
+- **Live MySQL Integration**: **100% Verified** against local MariaDB/MySQL server using dynamically isolated databases (`automitra_test_<uuid>`) and lifecycle protection guards ensuring pre-existing databases can never be dropped or overwritten.
+- **Financial Record Preservation**: **Enforced at both ORM and Database DDL levels** (`ON DELETE RESTRICT` on `Payments.bill_id`, `Bills`, and `ServiceBookings`). Attempted deletions of invoices with payment history are strictly rejected.
 - **CSRF Protection**: **Enforced across all 18 state-changing POST forms** and verified via `CSRFTestClient`.
 - **Destructive Database Actions**: **0** (No production or populated database was altered, reset, or overwritten; `schema.sql` was never run against live data).
 - **Base Branch `main`**: Untouched.
@@ -49,6 +51,9 @@ This engineering effort conducted an end-to-end security audit, data integrity r
 | **Phase 10** | Unrestricted Cascade Deletion on Historical Invoices & Reversals | **High / Integrity** | Completed and paid bookings could be rescheduled or moved backwards to Pending, and historical Bills were subject to cascade deletion. |
 | **Phase 11** | Duplicate Payment Transaction References & 500 Error Traceback Leakage | Medium / Security | Submitting duplicate transaction references was allowed; HTTP 500 error handler returned raw internal exception strings in production. |
 | **Phase 12** | Live MySQL Integration Verification & CI Pipeline Gaps | Medium / DevOps | CI lacked MySQL test containers and dev dependencies; live MySQL tests were missing. |
+| **Phase 13** | Unsafe MySQL Integration Test Database Deletion Hazard | **Critical / Safety** | Integration test used a hardcoded database name and dropped it in cleanup, risking accidental deletion of pre-existing databases. Fixed with collision-proof `automitra_test_<uuid>` names, pre-existence checks, and strict cleanup deletion guards. |
+| **Phase 13** | Silent Cascade Deletion of Financial Payment History | **Critical / Financial Integrity** | `Bill.payments` used `cascade='all, delete-orphan'` and `Payment.bill_id` had `ON DELETE CASCADE`. Deleting a bill silently wiped historical payment records. Changed to restrictive deletion at ORM and DDL levels, enabled SQLite FK enforcement via PRAGMA, and blocked deletions of bills with payments. |
+| **Phase 13** | Inconsistent Invoice Editing & Payment Idempotency | High / Financial Integrity | Editing bills with recorded payments was permitted; payments on settled zero-balance bills were accepted; missing database unique constraint on `Payments.transaction_reference`. Added route-level locks and database constraints. |
 
 ---
 
@@ -150,6 +155,36 @@ This engineering effort conducted an end-to-end security audit, data integrity r
   - Updated GitHub Actions CI to spin up a `mysql:8.0` service container, cache pip packages, install `requirements-dev.txt`, and trigger on pushes to `main` and `fix/**`.
 - **Tests Added**: `test_live_mysql_integration_and_integrity`.
 
+### Phase 13: Final Safety Fixes, Restrictive Payment Deletion & Safe MySQL Test Lifecycle
+- **Files Modified**: `models.py`, `routes/billing.py`, `routes/payments.py`, `schema.sql`, `.github/workflows/tests.yml`, `test_app.py`.
+- **Changes**:
+  1. **Safe MySQL Test Database Lifecycle (`SafeMySQLTestDatabase`)**:
+     - Dynamically generated collision-free database name per test invocation (`automitra_test_<uuid>`).
+     - Pre-existence verification query against `INFORMATION_SCHEMA.SCHEMATA`. If a database with the target name pre-exists, the test aborts before DDL execution to prevent overwriting.
+     - Strict deletion guard `created_by_test`: drops a database only if it was explicitly created by the current test instance and matches prefix `automitra_test_`.
+     - Skip with descriptive reason when MySQL is unavailable or lacks administrative creation privileges, avoiding arbitrary local database mutations.
+     - Add dedicated regression test `test_mysql_lifecycle_guards_preexisting_database_from_deletion` proving pre-existing databases are protected from selection and deletion.
+     - Configured CI workflow environment variables for MySQL connection consistency.
+  2. **Preserve Payment History When Deleting Bills**:
+     - Removed `cascade='all, delete-orphan'` from `Bill.payments` in `models.py`.
+     - Changed `Payment.bill_id` foreign key from `CASCADE` to `ondelete='RESTRICT'`.
+     - Changed `ServiceBooking.customer_id` and `ServiceBooking.vehicle_id` foreign keys to `ondelete='RESTRICT'`.
+     - Enabled SQLite foreign key enforcement via SQLAlchemy engine listener (`PRAGMA foreign_keys=ON`) ensuring identical restrictive deletion semantics across SQLite and MySQL.
+     - Aligned `schema.sql` foreign keys to `ON DELETE RESTRICT` (`fk_booking_customer`, `fk_booking_vehicle`, `fk_bill_booking`, `fk_bill_customer`, `fk_payment_bill`).
+     - Added comprehensive regression tests:
+       - `test_bill_deletion_rejected_when_payments_exist` (ORM rejection with IntegrityError)
+       - `test_raw_sql_bill_deletion_rejected_by_foreign_key_restriction` (Engine/DDL-level rejection)
+       - `test_disposable_bill_without_payments_can_be_deleted` (Allows clean deletion when no financial records exist)
+       - `test_customer_and_booking_deletion_cannot_bypass_payment_safeguards` (Cross-entity deletion safety)
+  3. **Financial & Database Integrity Revalidation**:
+     - Blocked editing bills marked `Paid` or having recorded payments (`total_paid > 0`) in `routes/billing.py`.
+     - Blocked recording payments on settled invoices (`balance <= Decimal('0.00')`) in `routes/payments.py`.
+     - Enforced `UNIQUE` constraint on `Payment.transaction_reference` at both ORM and database DDL levels, with graceful collision handling in the payments route.
+     - Added regression tests:
+       - `test_payment_route_rejects_settled_zero_balance_bill`
+       - `test_billing_edit_route_rejects_paid_invoices`
+       - `test_payment_unique_transaction_reference_db_constraint`
+
 ---
 
 ## 4. Full Pytest Execution Results
@@ -163,51 +198,59 @@ This engineering effort conducted an end-to-end security audit, data integrity r
 platform win32 -- Python 3.14.6, pytest-9.1.1, pluggy-1.7.0 -- C:\Users\krris\OneDrive\Documents\Inventory Management System\Automitra\.venv\Scripts\python.exe
 cachedir: .pytest_cache
 rootdir: C:\Users\krris\OneDrive\Documents\Inventory Management System\Automitra
-collecting ... collected 41 items
+collecting ... collected 49 items
 
 test_app.py::test_database_tables_seeded PASSED                          [  2%]
 test_app.py::test_duplicate_customer_detection PASSED                    [  4%]
-test_app.py::test_missed_bookings_logic PASSED                           [  7%]
-test_app.py::test_spare_parts_inventory_deduction PASSED                 [  9%]
-test_app.py::test_low_stock_detection PASSED                             [ 12%]
-test_app.py::test_billing_and_payments PASSED                            [ 14%]
-test_app.py::test_all_web_routes PASSED                                  [ 17%]
-test_app.py::test_cross_job_part_deletion_rejected PASSED                [ 19%]
-test_app.py::test_booking_rejects_vehicle_customer_mismatch PASSED       [ 21%]
-test_app.py::test_booking_rejects_nonexistent_customer_or_vehicle PASSED [ 24%]
-test_app.py::test_invalid_service_and_inventory_inputs PASSED            [ 26%]
-test_app.py::test_insufficient_stock_and_negative_stock_prevention PASSED [ 29%]
-test_app.py::test_part_usage_restoration_once PASSED                     [ 31%]
-test_app.py::test_authoritative_billing_rejects_client_tampering PASSED  [ 34%]
-test_app.py::test_billing_rejects_negative_tax_discount_and_excessive_discount PASSED [ 36%]
-test_app.py::test_payments_validation_and_lock_on_billed_invoices PASSED [ 39%]
-test_app.py::test_cannot_delete_customer_with_historical_bills_or_history PASSED [ 41%]
-test_app.py::test_cannot_delete_vehicle_with_service_history PASSED      [ 43%]
-test_app.py::test_valid_deletion_of_disposable_unreferenced_records PASSED [ 46%]
-test_app.py::test_orm_metadata_and_updated_at PASSED                     [ 48%]
-test_app.py::test_status_and_method_check_constraints PASSED             [ 51%]
-test_app.py::test_service_detail_unique_booking_constraint PASSED        [ 53%]
-test_app.py::test_production_config_rejects_missing_secret_key PASSED    [ 56%]
-test_app.py::test_mysql_failure_prohibits_silent_sqlite_fallback PASSED  [ 58%]
-test_app.py::test_explicit_sqlite_mode_allowed PASSED                    [ 60%]
-test_app.py::test_inventory_new_part_validation_and_location_bin PASSED  [ 63%]
-test_app.py::test_vehicle_creation_and_edit_validation PASSED            [ 65%]
-test_app.py::test_mechanic_status_and_rate_validation PASSED             [ 68%]
-test_app.py::test_booking_rejects_nonexistent_mechanic PASSED            [ 70%]
-test_app.py::test_init_db_and_seeder_idempotency PASSED                  [ 73%]
-test_app.py::test_exact_decimal_accounting_and_quantization PASSED       [ 75%]
-test_app.py::test_restock_rejects_negative_or_zero_quantity PASSED       [ 78%]
-test_app.py::test_csrf_protection_enforced PASSED                        [ 80%]
-test_app.py::test_multithreaded_concurrent_stock_deduction PASSED        [ 82%]
-test_app.py::test_booking_status_lock_on_paid_invoice PASSED             [ 85%]
-test_app.py::test_booking_reschedule_lock_on_completed_or_paid PASSED    [ 87%]
-test_app.py::test_service_job_status_lock_on_paid_invoice PASSED         [ 90%]
-test_app.py::test_duplicate_payment_transaction_reference_rejected PASSED [ 92%]
-test_app.py::test_bill_cascade_deletion_prevention PASSED                [ 95%]
-test_app.py::test_500_error_handler_sanitization PASSED                  [ 97%]
-test_app.py::test_live_mysql_integration_and_integrity PASSED            [100%]
+test_app.py::test_missed_bookings_logic PASSED                           [  6%]
+test_app.py::test_spare_parts_inventory_deduction PASSED                 [  8%]
+test_app.py::test_low_stock_detection PASSED                             [ 10%]
+test_app.py::test_billing_and_payments PASSED                            [ 12%]
+test_app.py::test_all_web_routes PASSED                                  [ 14%]
+test_app.py::test_cross_job_part_deletion_rejected PASSED                [ 16%]
+test_app.py::test_booking_rejects_vehicle_customer_mismatch PASSED       [ 18%]
+test_app.py::test_booking_rejects_nonexistent_customer_or_vehicle PASSED [ 20%]
+test_app.py::test_invalid_service_and_inventory_inputs PASSED            [ 22%]
+test_app.py::test_insufficient_stock_and_negative_stock_prevention PASSED [ 24%]
+test_app.py::test_part_usage_restoration_once PASSED                     [ 26%]
+test_app.py::test_authoritative_billing_rejects_client_tampering PASSED  [ 28%]
+test_app.py::test_billing_rejects_negative_tax_discount_and_excessive_discount PASSED [ 30%]
+test_app.py::test_payments_validation_and_lock_on_billed_invoices PASSED [ 32%]
+test_app.py::test_cannot_delete_customer_with_historical_bills_or_history PASSED [ 34%]
+test_app.py::test_cannot_delete_vehicle_with_service_history PASSED      [ 36%]
+test_app.py::test_valid_deletion_of_disposable_unreferenced_records PASSED [ 38%]
+test_app.py::test_orm_metadata_and_updated_at PASSED                     [ 40%]
+test_app.py::test_status_and_method_check_constraints PASSED             [ 42%]
+test_app.py::test_service_detail_unique_booking_constraint PASSED        [ 44%]
+test_app.py::test_production_config_rejects_missing_secret_key PASSED    [ 46%]
+test_app.py::test_mysql_failure_prohibits_silent_sqlite_fallback PASSED  [ 48%]
+test_app.py::test_explicit_sqlite_mode_allowed PASSED                    [ 51%]
+test_app.py::test_inventory_new_part_validation_and_location_bin PASSED  [ 53%]
+test_app.py::test_vehicle_creation_and_edit_validation PASSED            [ 55%]
+test_app.py::test_mechanic_status_and_rate_validation PASSED             [ 57%]
+test_app.py::test_booking_rejects_nonexistent_mechanic PASSED            [ 59%]
+test_app.py::test_init_db_and_seeder_idempotency PASSED                  [ 61%]
+test_app.py::test_exact_decimal_accounting_and_quantization PASSED       [ 63%]
+test_app.py::test_restock_rejects_negative_or_zero_quantity PASSED       [ 65%]
+test_app.py::test_csrf_protection_enforced PASSED                        [ 67%]
+test_app.py::test_multithreaded_concurrent_stock_deduction PASSED        [ 69%]
+test_app.py::test_booking_status_lock_on_paid_invoice PASSED             [ 71%]
+test_app.py::test_booking_reschedule_lock_on_completed_or_paid PASSED    [ 73%]
+test_app.py::test_service_job_status_lock_on_paid_invoice PASSED         [ 75%]
+test_app.py::test_duplicate_payment_transaction_reference_rejected PASSED [ 77%]
+test_app.py::test_bill_cascade_deletion_prevention PASSED                [ 79%]
+test_app.py::test_500_error_handler_sanitization PASSED                  [ 81%]
+test_app.py::test_mysql_lifecycle_guards_preexisting_database_from_deletion PASSED [ 83%]
+test_app.py::test_live_mysql_integration_and_integrity PASSED            [ 85%]
+test_app.py::test_bill_deletion_rejected_when_payments_exist PASSED      [ 87%]
+test_app.py::test_raw_sql_bill_deletion_rejected_by_foreign_key_restriction PASSED [ 89%]
+test_app.py::test_disposable_bill_without_payments_can_be_deleted PASSED [ 91%]
+test_app.py::test_customer_and_booking_deletion_cannot_bypass_payment_safeguards PASSED [ 93%]
+test_app.py::test_payment_route_rejects_settled_zero_balance_bill PASSED [ 95%]
+test_app.py::test_billing_edit_route_rejects_paid_invoices PASSED        [ 97%]
+test_app.py::test_payment_unique_transaction_reference_db_constraint PASSED [100%]
 
-============================= 41 passed in 7.30s ==============================
+============================= 49 passed in 7.11s ==============================
 ```
 
 ---
@@ -216,7 +259,7 @@ test_app.py::test_live_mysql_integration_and_integrity PASSED            [100%]
 
 ### Live MySQL Verification Status
 - **Status**: **VERIFIED LIVE** on localhost:3306 (MariaDB/MySQL 10.4.32).
-- The test suite provisions an isolated database (`automitra_live_pytest_isolated`), applies `db.create_all()`, seeds data, tests rollback semantics and decimal precision, and drops the test database cleanly upon completion.
+- The integration test generates a unique collision-free database name (`automitra_test_<uuid>`), confirms no existing database with that name exists, creates the schema, tests transactional commits, rollbacks, restrictive foreign keys, and decimal precision, and securely drops only the database created by that run.
 
 ### Non-Destructive Production Migration Plan
 When deploying to existing MySQL databases, follow this safe sequence:
@@ -237,19 +280,42 @@ When deploying to existing MySQL databases, follow this safe sequence:
    -- 2. Add Unique constraint on ServiceDetails.booking_id (verify no duplicates exist first)
    ALTER TABLE ServiceDetails ADD CONSTRAINT uq_service_details_booking UNIQUE (booking_id);
 
-   -- 3. Modify Foreign Key cascades to RESTRICT for financial preservation
+   -- 3. Modify Foreign Key cascades on ServiceBookings to RESTRICT
+   ALTER TABLE ServiceBookings DROP FOREIGN KEY IF EXISTS fk_booking_customer;
+   ALTER TABLE ServiceBookings ADD CONSTRAINT fk_booking_customer FOREIGN KEY (customer_id) REFERENCES Customers(id) ON DELETE RESTRICT;
+
+   ALTER TABLE ServiceBookings DROP FOREIGN KEY IF EXISTS fk_booking_vehicle;
+   ALTER TABLE ServiceBookings ADD CONSTRAINT fk_booking_vehicle FOREIGN KEY (vehicle_id) REFERENCES Vehicles(id) ON DELETE RESTRICT;
+
+   -- 4. Modify Foreign Key cascades on Bills to RESTRICT for financial preservation
    ALTER TABLE Bills DROP FOREIGN KEY IF EXISTS fk_bills_booking;
    ALTER TABLE Bills ADD CONSTRAINT fk_bills_booking FOREIGN KEY (booking_id) REFERENCES ServiceBookings(id) ON DELETE RESTRICT;
 
    ALTER TABLE Bills DROP FOREIGN KEY IF EXISTS fk_bills_customer;
    ALTER TABLE Bills ADD CONSTRAINT fk_bills_customer FOREIGN KEY (customer_id) REFERENCES Customers(id) ON DELETE RESTRICT;
+
+   -- 5. Modify Foreign Key cascades on Payments to RESTRICT to preserve payment history
+   ALTER TABLE Payments DROP FOREIGN KEY IF EXISTS fk_payment_bill;
+   ALTER TABLE Payments ADD CONSTRAINT fk_payment_bill FOREIGN KEY (bill_id) REFERENCES Bills(id) ON DELETE RESTRICT;
+
+   -- 6. Add Unique constraint on Payments.transaction_reference (verify no duplicates exist first)
+   ALTER TABLE Payments ADD CONSTRAINT uq_payments_transaction_ref UNIQUE (transaction_reference);
    ```
 
 4. **Rollback Script (If Reversion is Required)**:
    ```sql
    -- Revert to original cascade settings if necessary
+   ALTER TABLE ServiceBookings DROP FOREIGN KEY fk_booking_customer;
+   ALTER TABLE ServiceBookings ADD CONSTRAINT fk_booking_customer FOREIGN KEY (customer_id) REFERENCES Customers(id) ON DELETE CASCADE;
+
+   ALTER TABLE ServiceBookings DROP FOREIGN KEY fk_booking_vehicle;
+   ALTER TABLE ServiceBookings ADD CONSTRAINT fk_booking_vehicle FOREIGN KEY (vehicle_id) REFERENCES Vehicles(id) ON DELETE CASCADE;
+
    ALTER TABLE Bills DROP FOREIGN KEY fk_bills_booking;
    ALTER TABLE Bills ADD CONSTRAINT fk_bills_booking FOREIGN KEY (booking_id) REFERENCES ServiceBookings(id) ON DELETE CASCADE;
+
+   ALTER TABLE Payments DROP FOREIGN KEY fk_payment_bill;
+   ALTER TABLE Payments ADD CONSTRAINT fk_payment_bill FOREIGN KEY (bill_id) REFERENCES Bills(id) ON DELETE CASCADE;
    ```
 
 ---

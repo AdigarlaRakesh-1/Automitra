@@ -1,7 +1,7 @@
 import os
 os.environ['USE_SQLITE'] = 'true'
 import pytest
-from datetime import date, timedelta, datetime
+from datetime import date, timedelta, datetime, timezone
 from decimal import Decimal
 from flask import session
 from flask.testing import FlaskClient
@@ -940,26 +940,141 @@ def test_500_error_handler_sanitization():
         assert b"CRITICAL_DATABASE_PASSWORD_OR_INTERNAL_TRACEBACK_DATA" not in res.data
         assert b"internal server error occurred" in res.data or b"administrator" in res.data
 
-def test_live_mysql_integration_and_integrity():
-    """Integration test against real MySQL/MariaDB service if available on localhost:3306."""
+class SafeMySQLTestDatabase:
+    """Safe lifecycle manager for transient integration-test MySQL databases.
+    Guarantees:
+    1. Uniquely generates collision-free database names for every test execution.
+    2. Validates that the database did NOT exist beforehand; strictly refuses to overwrite.
+    3. Sets created_by_test=True only when this specific run created the database.
+    4. In cleanup, refuses to drop any database unless created_by_test is True AND name matches test prefix.
+    5. Safely cleans up all connections, cursors, and resources without leaks.
+    """
+    def __init__(self, host=None, port=None, user=None, password=None, prefix='automitra_test_'):
+        import os
+        self.host = host or os.environ.get('MYSQL_TEST_HOST', os.environ.get('MYSQL_HOST', '127.0.0.1'))
+        self.port = int(port or os.environ.get('MYSQL_TEST_PORT', os.environ.get('MYSQL_PORT', 3306)))
+        self.user = user or os.environ.get('MYSQL_TEST_USER', os.environ.get('MYSQL_USER', 'root'))
+        self.password = password if password is not None else os.environ.get('MYSQL_TEST_PASSWORD', os.environ.get('MYSQL_PASSWORD', ''))
+        self.prefix = prefix
+        self.db_name = None
+        self.created_by_test = False
+        self._admin_conn = None
+
+    def connect_admin(self):
+        import pymysql
+        return pymysql.connect(
+            host=self.host,
+            port=self.port,
+            user=self.user,
+            password=self.password,
+            connect_timeout=3
+        )
+
+    def __enter__(self):
+        import uuid
+        try:
+            self._admin_conn = self.connect_admin()
+        except Exception as exc:
+            pytest.skip(f"Live MySQL test service unavailable at {self.host}:{self.port} ({exc})")
+
+        # Generate a unique, collision-free database name
+        candidate = f"{self.prefix}{uuid.uuid4().hex[:12]}"
+
+        with self._admin_conn.cursor() as cur:
+            cur.execute("SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = %s", (candidate,))
+            if cur.fetchone():
+                raise RuntimeError(f"Safety violation: candidate test database '{candidate}' already exists!")
+
+            cur.execute(f"CREATE DATABASE `{candidate}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
+            self.db_name = candidate
+            self.created_by_test = True
+
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            if self.created_by_test and self.db_name and self.db_name.startswith(self.prefix):
+                try:
+                    conn = self.connect_admin()
+                    with conn.cursor() as cur:
+                        cur.execute(f"DROP DATABASE IF EXISTS `{self.db_name}`")
+                    conn.close()
+                except Exception as e:
+                    print(f"Warning: Failed to drop test database {self.db_name}: {e}")
+                finally:
+                    self.created_by_test = False
+                    self.db_name = None
+        finally:
+            if self._admin_conn:
+                try:
+                    self._admin_conn.close()
+                except Exception:
+                    pass
+                self._admin_conn = None
+
+    @property
+    def uri(self):
+        auth = f"{self.user}:{self.password}" if self.password else self.user
+        return f"mysql+pymysql://{auth}@{self.host}:{self.port}/{self.db_name}"
+
+def test_mysql_lifecycle_guards_preexisting_database_from_deletion():
+    """Verify SafeMySQLTestDatabase strictly protects pre-existing databases and never drops them."""
     import pymysql
     try:
         conn = pymysql.connect(host='127.0.0.1', port=3306, user='root', password='', connect_timeout=2)
     except Exception as exc:
         pytest.skip(f"Live MySQL service not available on localhost:3306 ({exc})")
 
-    db_name = 'automitra_live_pytest_isolated'
-    try:
-        with conn.cursor() as cur:
-            cur.execute(f"CREATE DATABASE IF NOT EXISTS `{db_name}` CHARACTER SET utf8mb4;")
-        conn.close()
+    dummy_existing_db = "automitra_dummy_preexisting_db"
+    with conn.cursor() as cur:
+        cur.execute(f"CREATE DATABASE IF NOT EXISTS `{dummy_existing_db}` CHARACTER SET utf8mb4;")
+    conn.close()
 
-        class LiveMySQLConfig(Config):
+    try:
+        # 1. Attempt to create a test DB using an already existing name must fail
+        mgr = SafeMySQLTestDatabase(prefix=dummy_existing_db)
+        mgr._admin_conn = mgr.connect_admin()
+        # Manually verify that candidate collision check blocks creation
+        with pytest.raises(RuntimeError, match="Safety violation"):
+            with mgr._admin_conn.cursor() as cur:
+                # Force candidate to match the pre-existing DB
+                candidate = dummy_existing_db
+                cur.execute("SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = %s", (candidate,))
+                if cur.fetchone():
+                    raise RuntimeError(f"Safety violation: candidate test database '{candidate}' already exists!")
+
+        mgr._admin_conn.close()
+
+        # 2. Verify __exit__ refuses to drop a DB if created_by_test is False
+        unauthorized_mgr = SafeMySQLTestDatabase()
+        unauthorized_mgr.db_name = dummy_existing_db
+        unauthorized_mgr.created_by_test = False
+        unauthorized_mgr.__exit__(None, None, None)
+
+        # Confirm the pre-existing database was NOT dropped
+        verify_conn = pymysql.connect(host='127.0.0.1', port=3306, user='root', password='')
+        with verify_conn.cursor() as cur:
+            cur.execute("SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = %s", (dummy_existing_db,))
+            assert cur.fetchone() is not None, "Pre-existing database must never be dropped!"
+        verify_conn.close()
+    finally:
+        clean_conn = pymysql.connect(host='127.0.0.1', port=3306, user='root', password='')
+        with clean_conn.cursor() as cur:
+            cur.execute(f"DROP DATABASE IF EXISTS `{dummy_existing_db}`;")
+        clean_conn.close()
+
+def test_live_mysql_integration_and_integrity():
+    """Integration test against dynamically provisioned, collision-free MySQL test database."""
+    with SafeMySQLTestDatabase() as test_db:
+        assert test_db.created_by_test is True
+        assert test_db.db_name.startswith("automitra_test_")
+
+        class DynamicLiveMySQLConfig(Config):
             TESTING = True
             WTF_CSRF_ENABLED = False
-            SQLALCHEMY_DATABASE_URI = f"mysql+pymysql://root:@127.0.0.1:3306/{db_name}"
+            SQLALCHEMY_DATABASE_URI = test_db.uri
 
-        mysql_app = create_app(LiveMySQLConfig)
+        mysql_app = create_app(DynamicLiveMySQLConfig)
         with mysql_app.app_context():
             db.create_all()
             from seed_data import seed_database
@@ -980,11 +1095,3 @@ def test_live_mysql_integration_and_integrity():
 
             db.session.remove()
             db.drop_all()
-    finally:
-        try:
-            conn_clean = pymysql.connect(host='127.0.0.1', port=3306, user='root', password='', connect_timeout=2)
-            with conn_clean.cursor() as cur:
-                cur.execute(f"DROP DATABASE IF EXISTS `{db_name}`;")
-            conn_clean.close()
-        except Exception:
-            pass

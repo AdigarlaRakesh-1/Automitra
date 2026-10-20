@@ -119,11 +119,25 @@ http://127.0.0.1:5000
 
 ## 🧪 Automated Testing
 
-AutoMitra includes an automated test suite verifying all 9 tables, business logic (duplicate detection, missed bookings, inventory stock deduction, and payment settlement), and web views:
+AutoMitra includes a comprehensive 41-item automated test suite covering all 9 tables, CSRF protection, concurrency safety, decimal precision accounting, cascade deletion restrictions, and real MySQL integration:
 
 ```bash
+# Run test suite with isolated in-memory/file SQLite and live MySQL tests:
 python -m pytest test_app.py -v
 ```
+
+All 41 tests execute in ~7.5 seconds with zero deprecation warnings.
+
+---
+
+## 🔒 Security, CSRF Protection & Deployment Model
+
+- **CSRF Protection**: All state-changing form actions (POST requests) are protected with cryptographic tokens via `Flask-WTF`. Missing or invalid tokens are rejected with HTTP 400.
+- **Error Sanitization**: In production (`DEBUG=False`), HTTP 500 error handlers sanitize exception messages, ensuring internal tracebacks, SQL statements, and database credentials are never exposed.
+- **Single-Operator Architecture**: AutoMitra is designed for single-operator internal garage operations. It does not implement multi-user authentication (passwords or RBAC).
+- **Deployment Restrictions**:
+  - **Do not expose directly to the public internet** without an authenticating reverse proxy (e.g., Cloudflare Access, Nginx with OIDC/HTTP Auth, or private Tailscale/VPN).
+  - Bind to localhost (`127.0.0.1`) or a secured private local network in production.
 
 ---
 

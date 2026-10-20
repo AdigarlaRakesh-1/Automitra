@@ -1,4 +1,4 @@
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from decimal import Decimal
 from models import db, Customer, Vehicle, Mechanic, ServiceBooking, ServiceDetail, SparePart, PartUsage, Bill, Payment
 
@@ -126,8 +126,8 @@ def seed_database():
         labor_hours=Decimal("2.50"),
         labor_cost=Decimal("1000.00"),
         status="Completed",
-        started_at=datetime.utcnow() - timedelta(days=2, hours=6),
-        completed_at=datetime.utcnow() - timedelta(days=2, hours=3)
+        started_at=datetime.now(timezone.utc) - timedelta(days=2, hours=6),
+        completed_at=datetime.now(timezone.utc) - timedelta(days=2, hours=3)
     )
     sd2 = ServiceDetail(
         booking_id=b2.id,
@@ -137,7 +137,7 @@ def seed_database():
         labor_hours=Decimal("2.00"),
         labor_cost=Decimal("1100.00"),
         status="In Progress",
-        started_at=datetime.utcnow() - timedelta(hours=2),
+        started_at=datetime.now(timezone.utc) - timedelta(hours=2),
         completed_at=None
     )
 
@@ -173,7 +173,7 @@ def seed_database():
         discount_amount=discount_1,
         grand_total=grand_total_1,
         payment_status="Paid",
-        issued_at=datetime.utcnow() - timedelta(days=2, hours=3)
+        issued_at=datetime.now(timezone.utc) - timedelta(days=2, hours=3)
     )
 
     parts_total_2 = Decimal("2600.00") + Decimal("7600.00") + Decimal("380.00") # 10580.00
@@ -192,7 +192,7 @@ def seed_database():
         discount_amount=discount_2,
         grand_total=grand_total_2,
         payment_status="Partially Paid",
-        issued_at=datetime.utcnow() - timedelta(hours=2)
+        issued_at=datetime.now(timezone.utc) - timedelta(hours=2)
     )
 
     db.session.add_all([bill1, bill2])
@@ -204,7 +204,7 @@ def seed_database():
         amount=grand_total_1,
         payment_method="UPI / Online",
         transaction_reference="UPI-HDFC-982341",
-        payment_date=datetime.utcnow() - timedelta(days=2, hours=2, minutes=45),
+        payment_date=datetime.now(timezone.utc) - timedelta(days=2, hours=2, minutes=45),
         notes="UPI transfer via GooglePay"
     )
     pay2 = Payment(
@@ -212,7 +212,7 @@ def seed_database():
         amount=Decimal("5000.00"),
         payment_method="Credit Card",
         transaction_reference="CC-ICICI-8819203",
-        payment_date=datetime.utcnow() - timedelta(hours=1, minutes=30),
+        payment_date=datetime.now(timezone.utc) - timedelta(hours=1, minutes=30),
         notes="Advance token deposit paid via card swipe upon vehicle drop-off"
     )
 

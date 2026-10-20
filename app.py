@@ -1,9 +1,12 @@
 import os
 import sys
 from flask import Flask, render_template
+from flask_wtf.csrf import CSRFProtect, CSRFError
 from sqlalchemy import create_engine, text
 from config import Config
 from models import db
+
+csrf = CSRFProtect()
 
 def create_app(config_class=Config):
     app = Flask(__name__)
@@ -13,26 +16,43 @@ def create_app(config_class=Config):
     if app.config.get('TESTING'):
         app.config['SQLALCHEMY_DATABASE_URI'] = app.config.get('SQLALCHEMY_DATABASE_URI', 'sqlite:///:memory:')
     else:
-        # Determine database connection: MySQL with graceful SQLite fallback
+        if app.config.get('USE_SQLITE') is not None:
+            use_sqlite = bool(app.config.get('USE_SQLITE'))
+        else:
+            use_sqlite = os.environ.get('USE_SQLITE', 'false').lower() in ('true', '1', 'yes')
         db_uri = app.config.get('DATABASE_URL') or app.config.get('MYSQL_URI')
-        use_sqlite = os.environ.get('USE_SQLITE', 'false').lower() == 'true'
         
-        if not use_sqlite and db_uri.startswith('mysql'):
+        if use_sqlite:
+            app.config['SQLALCHEMY_DATABASE_URI'] = app.config.get('SQLITE_URI')
+        elif db_uri and db_uri.startswith('mysql'):
             try:
-                print(f"Connecting to MySQL: {app.config.get('MYSQL_HOST')}:{app.config.get('MYSQL_PORT')}...")
+                host = app.config.get('MYSQL_HOST', 'localhost')
+                port = app.config.get('MYSQL_PORT', '3306')
+                print(f"Connecting to MySQL: {host}:{port}...")
                 test_engine = create_engine(db_uri, connect_args={'connect_timeout': 2})
                 with test_engine.connect() as conn:
                     conn.execute(text("SELECT 1"))
                 print("Successfully connected to MySQL database!")
                 app.config['SQLALCHEMY_DATABASE_URI'] = db_uri
             except Exception as e:
-                print(f"Notice: MySQL connection not available ({e}).")
-                print("Falling back to embedded SQLite database (automitra.db) for zero-setup execution.")
-                app.config['SQLALCHEMY_DATABASE_URI'] = app.config['SQLITE_URI']
+                error_type = type(e).__name__
+                print(f"CRITICAL: Failed to connect to configured MySQL database ({error_type}).")
+                raise RuntimeError(
+                    f"Failed to connect to configured MySQL database ({error_type}). "
+                    "In production or when MySQL is configured, silent fallback to SQLite is prohibited to prevent data loss. "
+                    "To explicitly use SQLite for local development or testing, set USE_SQLITE=true."
+                ) from None
+        elif app.config.get('ENV') == 'development':
+            print("Notice: No MySQL connection configured. Defaulting to development SQLite database (automitra.db).")
+            app.config['SQLALCHEMY_DATABASE_URI'] = app.config.get('SQLITE_URI')
         else:
-            app.config['SQLALCHEMY_DATABASE_URI'] = app.config['SQLITE_URI']
+            raise RuntimeError(
+                "CRITICAL: No valid database connection string configured for production. "
+                "Please configure DATABASE_URL or MySQL environment variables."
+            )
 
     db.init_app(app)
+    csrf.init_app(app)
 
     # Register Jinja context & filters
     @app.template_filter('currency')
@@ -76,19 +96,26 @@ def create_app(config_class=Config):
     app.register_blueprint(payments_bp)
     app.register_blueprint(api_bp)
 
+    @app.errorhandler(CSRFError)
+    def handle_csrf_error(e):
+        return render_template('400.html', reason=e.description), 400
+
     @app.errorhandler(404)
     def page_not_found(e):
         return render_template('404.html'), 404
 
     @app.errorhandler(500)
     def internal_server_error(e):
-        return render_template('500.html', error=str(e)), 500
+        error_msg = str(e) if app.debug else "An unexpected internal server error occurred. Please contact the administrator."
+        return render_template('500.html', error=error_msg), 500
 
-    # Auto create tables and seed if empty
-    with app.app_context():
-        db.create_all()
-        from seed_data import seed_database
-        seed_database()
+    # Auto create tables and seed only if explicitly configured
+    if app.config.get('AUTO_CREATE_TABLES'):
+        with app.app_context():
+            db.create_all()
+            if app.config.get('AUTO_SEED'):
+                from seed_data import seed_database
+                seed_database()
 
     return app
 
@@ -97,4 +124,7 @@ app = create_app()
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print(f"Starting AutoMitra Web Application on http://127.0.0.1:{port}")
-    app.run(host='0.0.0.0', port=port, debug=True)
+    with app.app_context():
+        db.create_all()
+    debug_mode = app.config.get('DEBUG', False)
+    app.run(host='0.0.0.0', port=port, debug=debug_mode)

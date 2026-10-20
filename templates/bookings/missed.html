@@ -76,6 +76,7 @@
             <td>
               <!-- Inline Quick Reschedule Form -->
               <form action="{{ url_for('bookings.reschedule', booking_id=b.id) }}" method="POST" style="display:flex; gap:6px; align-items:center;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                 <input type="date" name="reschedule_date" required class="form-control" style="width:130px; font-size:11.5px; padding:4px 8px;" min="{{ today }}">
                 <select name="reschedule_time" required class="form-control" style="width:105px; font-size:11.5px; padding:4px 6px;">
                   <option value="09:00 AM">09:00 AM</option>
@@ -92,6 +93,7 @@
             </td>
             <td>
               <form action="{{ url_for('bookings.update_status', booking_id=b.id) }}" method="POST" style="display:inline-block;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                 <input type="hidden" name="status" value="Cancelled">
                 <button type="submit" class="btn btn-secondary btn-sm" onclick="return confirm('Cancel this missed booking?')">
                   Cancel

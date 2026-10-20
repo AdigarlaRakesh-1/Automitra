@@ -191,6 +191,7 @@
     </div>
 
     <form action="{{ url_for('payments.record_payment') }}" method="POST">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
       <input type="hidden" name="bill_id" value="{{ bill.id }}">
 
       <div class="modal-body">

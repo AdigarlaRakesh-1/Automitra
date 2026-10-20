@@ -1,12 +1,12 @@
 import random
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from models import db, ServiceBooking, ServiceDetail, Customer, Vehicle, Mechanic
 
 bookings_bp = Blueprint('bookings', __name__, url_prefix='/bookings')
 
 def generate_booking_number():
-    year = datetime.utcnow().year
+    year = datetime.now(timezone.utc).year
     rand_num = random.randint(10000, 99999)
     return f"BK-{year}-{rand_num}"
 
@@ -64,8 +64,40 @@ def new_booking():
             flash('Customer, vehicle, booking date, time, and service type are all required.', 'danger')
             return render_template('bookings/form.html', customers=customers, mechanics=mechanics, preselected_customer_id=c_id, preselected_vehicle_id=v_id)
 
+        # Validate Customer existence
+        customer = db.session.get(Customer, c_id)
+        if not customer:
+            flash('Selected customer does not exist.', 'danger')
+            return render_template('bookings/form.html', customers=customers, mechanics=mechanics, preselected_customer_id=c_id, preselected_vehicle_id=v_id)
+
+        # Validate Vehicle existence
+        vehicle = db.session.get(Vehicle, v_id)
+        if not vehicle:
+            flash('Selected vehicle does not exist.', 'danger')
+            return render_template('bookings/form.html', customers=customers, mechanics=mechanics, preselected_customer_id=c_id, preselected_vehicle_id=v_id)
+
+        # Validate Customer-Vehicle Ownership
+        if vehicle.customer_id != customer.id:
+            flash(f'Vehicle {vehicle.license_plate} does not belong to customer {customer.name}.', 'danger')
+            return render_template('bookings/form.html', customers=customers, mechanics=mechanics, preselected_customer_id=c_id, preselected_vehicle_id=v_id)
+
+        # Validate Mechanic existence if provided
+        if initial_mechanic_id:
+            m = db.session.get(Mechanic, initial_mechanic_id)
+            if not m:
+                flash('Selected mechanic does not exist.', 'danger')
+                return render_template('bookings/form.html', customers=customers, mechanics=mechanics, preselected_customer_id=c_id, preselected_vehicle_id=v_id)
+
+        # Validate booking date
         try:
             b_date = datetime.strptime(booking_date_str, '%Y-%m-%d').date()
+            if b_date.year < 2000 or b_date.year > 2100:
+                raise ValueError("Year out of valid range.")
+        except ValueError:
+            flash('Please provide a valid booking date (YYYY-MM-DD).', 'danger')
+            return render_template('bookings/form.html', customers=customers, mechanics=mechanics, preselected_customer_id=c_id, preselected_vehicle_id=v_id)
+
+        try:
             booking_number = generate_booking_number()
 
             # Ensure unique booking number
@@ -74,8 +106,8 @@ def new_booking():
 
             booking = ServiceBooking(
                 booking_number=booking_number,
-                customer_id=c_id,
-                vehicle_id=v_id,
+                customer_id=customer.id,
+                vehicle_id=vehicle.id,
                 booking_date=b_date,
                 booking_time=booking_time,
                 service_type=service_type,
@@ -90,14 +122,14 @@ def new_booking():
                 booking_id=booking.id,
                 mechanic_id=initial_mechanic_id or None,
                 job_description=f"Initial booking for: {service_type}. {notes}".strip(),
-                status='Assigned' if initial_mechanic_id else 'Assigned'
+                status='Assigned'
             )
             db.session.add(service_detail)
 
             # If mechanic assigned, update mechanic status to Busy
             if initial_mechanic_id:
                 m = db.session.get(Mechanic, initial_mechanic_id)
-                if m:
+                if m and m.status == 'Available':
                     m.status = 'Busy'
 
             db.session.commit()
@@ -111,42 +143,56 @@ def new_booking():
 
 @bookings_bp.route('/<int:booking_id>')
 def view_booking(booking_id):
-    booking = ServiceBooking.query.get_or_404(booking_id)
+    booking = db.get_or_404(ServiceBooking, booking_id)
     mechanics = Mechanic.query.all()
     return render_template('bookings/view.html', booking=booking, mechanics=mechanics)
 
 @bookings_bp.route('/<int:booking_id>/status', methods=['POST'])
 def update_status(booking_id):
-    booking = ServiceBooking.query.get_or_404(booking_id)
+    booking = db.get_or_404(ServiceBooking, booking_id)
     new_status = request.form.get('status')
     
-    if new_status in ['Pending', 'Confirmed', 'In Progress', 'Completed', 'Cancelled', 'Missed']:
-        booking.status = new_status
-        # Ensure service detail exists if moving to In Progress
-        if new_status == 'In Progress' and not booking.service_detail:
-            detail = ServiceDetail(
-                booking_id=booking.id,
-                job_description=booking.service_type,
-                status='In Progress',
-                started_at=datetime.utcnow()
-            )
-            db.session.add(detail)
-        elif new_status == 'In Progress' and booking.service_detail:
-            booking.service_detail.status = 'In Progress'
-            if not booking.service_detail.started_at:
-                booking.service_detail.started_at = datetime.utcnow()
-        elif new_status == 'Completed' and booking.service_detail:
-            booking.service_detail.status = 'Completed'
-            booking.service_detail.completed_at = datetime.utcnow()
+    valid_statuses = {'Pending', 'Confirmed', 'In Progress', 'Completed', 'Cancelled', 'Missed'}
+    if new_status not in valid_statuses:
+        flash(f'Invalid booking status "{new_status}".', 'danger')
+        return redirect(request.referrer or url_for('bookings.view_booking', booking_id=booking.id))
 
-        db.session.commit()
-        flash(f'Booking #{booking.booking_number} status updated to "{new_status}".', 'info')
+    if booking.bill and booking.bill.payment_status == 'Paid' and new_status != 'Completed':
+        flash('Cannot alter status of a service booking whose invoice is already paid.', 'danger')
+        return redirect(request.referrer or url_for('bookings.view_booking', booking_id=booking.id))
+
+    booking.status = new_status
+    # Ensure service detail exists if moving to In Progress
+    if new_status == 'In Progress' and not booking.service_detail:
+        detail = ServiceDetail(
+            booking_id=booking.id,
+            job_description=booking.service_type,
+            status='In Progress',
+            started_at=datetime.now(timezone.utc)
+        )
+        db.session.add(detail)
+    elif new_status == 'In Progress' and booking.service_detail:
+        booking.service_detail.status = 'In Progress'
+        if not booking.service_detail.started_at:
+            booking.service_detail.started_at = datetime.now(timezone.utc)
+    elif new_status == 'Completed' and booking.service_detail:
+        booking.service_detail.status = 'Completed'
+        if not booking.service_detail.completed_at:
+            booking.service_detail.completed_at = datetime.now(timezone.utc)
+
+    db.session.commit()
+    flash(f'Booking #{booking.booking_number} status updated to "{new_status}".', 'info')
     
     return redirect(request.referrer or url_for('bookings.view_booking', booking_id=booking.id))
 
 @bookings_bp.route('/<int:booking_id>/reschedule', methods=['POST'])
 def reschedule(booking_id):
-    booking = ServiceBooking.query.get_or_404(booking_id)
+    booking = db.get_or_404(ServiceBooking, booking_id)
+
+    if booking.status == 'Completed' or (booking.bill and booking.bill.payment_status == 'Paid'):
+        flash('Cannot reschedule a completed service booking or one with a paid invoice.', 'danger')
+        return redirect(request.referrer or url_for('bookings.view_booking', booking_id=booking.id))
+
     new_date_str = request.form.get('reschedule_date')
     new_time = request.form.get('reschedule_time')
 
@@ -156,6 +202,8 @@ def reschedule(booking_id):
 
     try:
         new_date = datetime.strptime(new_date_str, '%Y-%m-%d').date()
+        if new_date.year < 2000 or new_date.year > 2100:
+            raise ValueError("Year out of valid range.")
         booking.booking_date = new_date
         booking.booking_time = new_time
         booking.status = 'Confirmed'

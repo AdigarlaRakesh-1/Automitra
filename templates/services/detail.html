@@ -67,6 +67,7 @@
     </div>
 
     <form action="{{ url_for('services.update_job', detail_id=job.id) }}" method="POST">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
       <div class="form-group">
         <label class="form-label" for="job-mechanic-select">Allocated Mechanic</label>
         <select class="form-control" id="job-mechanic-select" name="mechanic_id">
@@ -135,6 +136,7 @@
       </div>
 
       <form action="{{ url_for('services.add_part_usage', detail_id=job.id) }}" method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
         <div class="form-group">
           <label class="form-label" for="job-part-select">Select In-Stock Part</label>
           <select class="form-control" id="job-part-select" name="part_id" required>
@@ -186,6 +188,7 @@
             <td style="font-weight:700; color:var(--accent-cyan);">{{ u.subtotal | currency }}</td>
             <td>
               <form action="{{ url_for('services.remove_part_usage', detail_id=job.id, usage_id=u.id) }}" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                 <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Remove part and restore stock to inventory?')" title="Restore stock">
                   &times;
                 </button>

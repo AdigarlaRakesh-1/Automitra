@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{% block title %}Bad Request - Security Check{% endblock %}
+
+{% block content %}
+<div style="text-align:center; padding: 80px 20px;">
+  <div style="font-size: 72px; font-weight: 800; color: var(--accent-rose); margin-bottom: 12px;">400</div>
+  <h2 style="margin-bottom: 8px;">Security Verification Failed</h2>
+  <p style="color: var(--text-muted); margin-bottom: 16px;">
+    {{ reason or "The request could not be verified by CSRF security controls. Please refresh and try again." }}
+  </p>
+  <div style="margin-top: 24px;">
+    <a href="{{ url_for('main.dashboard') }}" class="btn btn-primary">Return to Dashboard</a>
+  </div>
+</div>
+{% endblock %}

@@ -15,6 +15,7 @@
 
 <div class="card" style="max-width: 760px; margin: 0 auto;">
   <form method="POST">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
     <!-- Customer Selection -->
     <div class="form-group">
       <label class="form-label" for="booking-customer-select">Customer *</label>

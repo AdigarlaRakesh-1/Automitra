@@ -21,7 +21,7 @@ Small and medium auto service centers often struggle with six major operational 
 
 ## 🗄️ Proposed Relational Database Schema (9 Tables)
 
-The centralized relational database comprises the 9 proposed tables with foreign-key constraints, cascading actions, and indexing:
+The relational database uses nine tables with foreign-key constraints, appropriate indexing, and restrictive deletion rules for historical and financial records:
 
 | # | Table Name | Purpose & Solution | Key Fields |
 |---|------------|--------------------|------------|
@@ -35,7 +35,7 @@ The centralized relational database comprises the 9 proposed tables with foreign
 | 8 | **`Bills`** | Auto-generates invoices consolidating labor charges, parts used, and taxes | `id`, `invoice_number` *(unique)*, `booking_id` *(FK)*, `customer_id` *(FK)*, `parts_total`, `labor_total`, `tax_amount`, `discount_amount`, `grand_total` *(₹)*, `payment_status` |
 | 9 | **`Payments`** | Records payment transactions (UPI, Card, Cash, etc.) and tracks balance | `id`, `bill_id` *(FK)*, `amount` *(₹)*, `payment_method`, `transaction_reference`, `payment_date`, `notes` |
 
-The native DDL script is provided in [`schema.sql`](file:///d:/GarageBuddy/schema.sql).
+The native DDL script is provided in `schema.sql`.
 
 ---
 
@@ -46,7 +46,7 @@ The native DDL script is provided in [`schema.sql`](file:///d:/GarageBuddy/schem
 - **Currency**: **Indian Rupees (INR - ₹)** across all labor, parts, bills, and payments
 - **Database Engine**: 
   - **MySQL 8.0+** (native target via `PyMySQL`)
-  - **Embedded SQLite** (`automitra.db`) automatic fallback for instant zero-configuration testing if MySQL service is offline.
+  - **Embedded SQLite** (`automitra.db`): explicitly enabled via `USE_SQLITE=true` for zero-setup local development and isolated testing.
 - **Frontend**: Modern Vanilla HTML5 / CSS3 / Vanilla JavaScript
   - Dark / Light mode glassmorphism interface
   - Debounced live duplicate customer detection
@@ -58,7 +58,7 @@ The native DDL script is provided in [`schema.sql`](file:///d:/GarageBuddy/schem
 ## 🚀 Quickstart & Installation
 
 ### 1. Prerequisites
-Ensure you have **Python 3.10+** installed:
+Ensure you have **Python 3.11+** installed:
 ```bash
 python --version
 ```
@@ -66,6 +66,7 @@ python --version
 ### 2. Install Dependencies
 ```bash
 pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
 
 ### 3. Database Configuration
@@ -78,19 +79,28 @@ pip install -r requirements.txt
    ```
 3. Copy `.env.example` to `.env` and set your credentials:
    ```env
-   MYSQL_USER=root
+   SECRET_KEY=your-secure-random-secret-key-here
+   MYSQL_USER=your_mysql_username
    MYSQL_PASSWORD=your_mysql_password
    MYSQL_HOST=localhost
    MYSQL_PORT=3306
    MYSQL_DB=automitra
+   USE_SQLITE=false
    ```
 4. Run the database initialization tool:
    ```bash
    python init_db.py
    ```
 
-#### Option B: Zero-Setup Mode (Automatic SQLite Fallback)
-If MySQL is not active, AutoMitra automatically creates `automitra.db` and seeds realistic demo records in Indian Rupees (₹).
+#### Option B: Zero-Setup Mode (Embedded SQLite for Local Development)
+To run with zero setup using embedded SQLite, set `USE_SQLITE=true` in your `.env` or environment:
+```bash
+# In your .env or shell:
+USE_SQLITE=true
+
+# Initialize database:
+python init_db.py
+```
 
 ---
 
@@ -109,11 +119,25 @@ http://127.0.0.1:5000
 
 ## 🧪 Automated Testing
 
-AutoMitra includes an automated test suite verifying all 9 tables, business logic (duplicate detection, missed bookings, inventory stock deduction, and payment settlement), and web views:
+AutoMitra includes a comprehensive 53-item automated test suite covering all 9 tables, CSRF protection, concurrency safety, decimal precision accounting, restrictive foreign-key financial preservation, payment history protection, non-destructive migration testing, and safe real MySQL lifecycle integration:
 
 ```bash
+# Run test suite with isolated in-memory/file SQLite and live MySQL tests:
 python -m pytest test_app.py -v
 ```
+
+All 53 tests execute in ~8.0 seconds with zero deprecation warnings.
+
+---
+
+## 🔒 Security, CSRF Protection & Deployment Model
+
+- **CSRF Protection**: All state-changing form actions (POST requests) are protected with cryptographic tokens via `Flask-WTF`. Missing or invalid tokens are rejected with HTTP 400.
+- **Error Sanitization**: In production (`DEBUG=False`), HTTP 500 error handlers sanitize exception messages, ensuring internal tracebacks, SQL statements, and database credentials are never exposed.
+- **Single-Operator Architecture**: AutoMitra is designed for single-operator internal garage operations. It does not implement multi-user authentication (passwords or RBAC).
+- **Deployment Restrictions**:
+  - **Do not expose directly to the public internet** without an authenticating reverse proxy (e.g., Cloudflare Access, Nginx with OIDC/HTTP Auth, or private Tailscale/VPN).
+  - Bind to localhost (`127.0.0.1`) or a secured private local network in production.
 
 ---
 

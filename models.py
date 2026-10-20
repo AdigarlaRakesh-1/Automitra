@@ -1,8 +1,22 @@
-from datetime import datetime, date
+from datetime import datetime, date, timezone
+from decimal import Decimal
+import sqlite3
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import func
+from sqlalchemy import func, event
+from sqlalchemy.engine import Engine
 
 db = SQLAlchemy()
+
+@event.listens_for(Engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    """Enforce foreign key constraints in SQLite to match MySQL transactional integrity."""
+    if isinstance(dbapi_connection, sqlite3.Connection):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+def utc_now():
+    return datetime.now(timezone.utc)
 
 # ---------------------------------------------------------------------
 # 1. Customers Table
@@ -15,12 +29,13 @@ class Customer(db.Model):
     phone = db.Column(db.String(30), nullable=False, unique=True, index=True)
     email = db.Column(db.String(120), nullable=True)
     address = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
     
     # Relationships
     vehicles = db.relationship('Vehicle', backref='customer', cascade='all, delete-orphan', lazy=True)
-    bookings = db.relationship('ServiceBooking', backref='customer', cascade='all, delete-orphan', lazy=True)
-    bills = db.relationship('Bill', backref='customer', cascade='all, delete-orphan', lazy=True)
+    bookings = db.relationship('ServiceBooking', backref='customer', lazy=True)
+    bills = db.relationship('Bill', backref='customer', lazy=True)
     
     @classmethod
     def check_duplicate(cls, phone, email=None, exclude_id=None):
@@ -59,10 +74,10 @@ class Vehicle(db.Model):
     mileage = db.Column(db.Integer, default=0)
     fuel_type = db.Column(db.String(30), default='Petrol')
     color = db.Column(db.String(40), nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
     
     # Relationships
-    bookings = db.relationship('ServiceBooking', backref='vehicle', cascade='all, delete-orphan', lazy=True)
+    bookings = db.relationship('ServiceBooking', backref='vehicle', lazy=True)
 
     @property
     def display_name(self):
@@ -77,6 +92,9 @@ class Vehicle(db.Model):
 # ---------------------------------------------------------------------
 class Mechanic(db.Model):
     __tablename__ = 'Mechanics'
+    __table_args__ = (
+        db.CheckConstraint("status IN ('Available', 'Busy', 'On Leave')", name='check_mechanic_status'),
+    )
     
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     name = db.Column(db.String(120), nullable=False)
@@ -84,7 +102,7 @@ class Mechanic(db.Model):
     specialty = db.Column(db.String(100), nullable=False, default='General Service')
     status = db.Column(db.String(30), default='Available', index=True) # 'Available', 'Busy', 'On Leave'
     hourly_rate = db.Column(db.Numeric(10, 2), default=45.00)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
     
     # Relationships
     service_details = db.relationship('ServiceDetail', backref='mechanic', lazy=True)
@@ -102,21 +120,24 @@ class Mechanic(db.Model):
 # ---------------------------------------------------------------------
 class ServiceBooking(db.Model):
     __tablename__ = 'ServiceBookings'
+    __table_args__ = (
+        db.CheckConstraint("status IN ('Pending', 'Confirmed', 'In Progress', 'Completed', 'Cancelled', 'Missed')", name='check_booking_status'),
+    )
     
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     booking_number = db.Column(db.String(40), nullable=False, unique=True)
-    customer_id = db.Column(db.Integer, db.ForeignKey('Customers.id', ondelete='CASCADE'), nullable=False)
-    vehicle_id = db.Column(db.Integer, db.ForeignKey('Vehicles.id', ondelete='CASCADE'), nullable=False)
+    customer_id = db.Column(db.Integer, db.ForeignKey('Customers.id', ondelete='RESTRICT'), nullable=False)
+    vehicle_id = db.Column(db.Integer, db.ForeignKey('Vehicles.id', ondelete='RESTRICT'), nullable=False)
     booking_date = db.Column(db.Date, nullable=False, index=True)
     booking_time = db.Column(db.String(20), nullable=False)
     service_type = db.Column(db.String(100), nullable=False)
     status = db.Column(db.String(40), default='Pending', index=True) # 'Pending', 'Confirmed', 'In Progress', 'Completed', 'Cancelled', 'Missed'
     notes = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
     
     # Relationships
     service_detail = db.relationship('ServiceDetail', backref='booking', uselist=False, cascade='all, delete-orphan')
-    bill = db.relationship('Bill', backref='booking', uselist=False, cascade='all, delete-orphan')
+    bill = db.relationship('Bill', backref='booking', uselist=False, lazy=True)
 
     @property
     def is_missed(self):
@@ -135,9 +156,12 @@ class ServiceBooking(db.Model):
 # ---------------------------------------------------------------------
 class ServiceDetail(db.Model):
     __tablename__ = 'ServiceDetails'
+    __table_args__ = (
+        db.CheckConstraint("status IN ('Assigned', 'In Progress', 'Awaiting Parts', 'Completed')", name='check_detail_status'),
+    )
     
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    booking_id = db.Column(db.Integer, db.ForeignKey('ServiceBookings.id', ondelete='CASCADE'), nullable=False)
+    booking_id = db.Column(db.Integer, db.ForeignKey('ServiceBookings.id', ondelete='CASCADE'), nullable=False, unique=True)
     mechanic_id = db.Column(db.Integer, db.ForeignKey('Mechanics.id', ondelete='SET NULL'), nullable=True)
     job_description = db.Column(db.Text, nullable=False)
     diagnosis = db.Column(db.Text, nullable=True)
@@ -167,6 +191,11 @@ class ServiceDetail(db.Model):
 # ---------------------------------------------------------------------
 class SparePart(db.Model):
     __tablename__ = 'SpareParts'
+    __table_args__ = (
+        db.CheckConstraint('stock_quantity >= 0', name='check_spare_parts_stock_non_negative'),
+        db.CheckConstraint('cost_price >= 0', name='check_spare_parts_cost_non_negative'),
+        db.CheckConstraint('selling_price >= 0', name='check_spare_parts_price_non_negative'),
+    )
     
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     part_number = db.Column(db.String(50), nullable=False, unique=True, index=True)
@@ -177,7 +206,7 @@ class SparePart(db.Model):
     stock_quantity = db.Column(db.Integer, default=0, index=True)
     min_reorder_level = db.Column(db.Integer, default=5)
     location_bin = db.Column(db.String(50), nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
     
     # Relationships
     usages = db.relationship('PartUsage', backref='spare_part', lazy=True)
@@ -195,6 +224,11 @@ class SparePart(db.Model):
 # ---------------------------------------------------------------------
 class PartUsage(db.Model):
     __tablename__ = 'PartUsage'
+    __table_args__ = (
+        db.CheckConstraint('quantity > 0', name='check_part_usage_qty_positive'),
+        db.CheckConstraint('unit_price >= 0', name='check_part_usage_price_non_negative'),
+        db.CheckConstraint('subtotal >= 0', name='check_part_usage_subtotal_non_negative'),
+    )
     
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     service_detail_id = db.Column(db.Integer, db.ForeignKey('ServiceDetails.id', ondelete='CASCADE'), nullable=False)
@@ -202,7 +236,7 @@ class PartUsage(db.Model):
     quantity = db.Column(db.Integer, nullable=False, default=1)
     unit_price = db.Column(db.Numeric(10, 2), default=0.00)
     subtotal = db.Column(db.Numeric(10, 2), default=0.00)
-    used_at = db.Column(db.DateTime, default=datetime.utcnow)
+    used_at = db.Column(db.DateTime, default=utc_now)
 
     def __repr__(self):
         return f"<PartUsage Part #{self.part_id} x{self.quantity}>"
@@ -213,43 +247,52 @@ class PartUsage(db.Model):
 # ---------------------------------------------------------------------
 class Bill(db.Model):
     __tablename__ = 'Bills'
+    __table_args__ = (
+        db.CheckConstraint('grand_total >= 0', name='check_bill_grand_total_non_negative'),
+        db.CheckConstraint('parts_total >= 0', name='check_bill_parts_total_non_negative'),
+        db.CheckConstraint('labor_total >= 0', name='check_bill_labor_total_non_negative'),
+        db.CheckConstraint('tax_amount >= 0', name='check_bill_tax_amount_non_negative'),
+        db.CheckConstraint('discount_amount >= 0', name='check_bill_discount_amount_non_negative'),
+        db.CheckConstraint("payment_status IN ('Unpaid', 'Partially Paid', 'Paid')", name='check_bill_payment_status'),
+    )
     
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     invoice_number = db.Column(db.String(50), nullable=False, unique=True, index=True)
-    booking_id = db.Column(db.Integer, db.ForeignKey('ServiceBookings.id', ondelete='CASCADE'), nullable=False, unique=True)
-    customer_id = db.Column(db.Integer, db.ForeignKey('Customers.id', ondelete='CASCADE'), nullable=False)
+    booking_id = db.Column(db.Integer, db.ForeignKey('ServiceBookings.id', ondelete='RESTRICT'), nullable=False, unique=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey('Customers.id', ondelete='RESTRICT'), nullable=False)
     parts_total = db.Column(db.Numeric(10, 2), default=0.00)
     labor_total = db.Column(db.Numeric(10, 2), default=0.00)
     tax_amount = db.Column(db.Numeric(10, 2), default=0.00)
     discount_amount = db.Column(db.Numeric(10, 2), default=0.00)
     grand_total = db.Column(db.Numeric(10, 2), default=0.00)
     payment_status = db.Column(db.String(30), default='Unpaid', index=True) # 'Unpaid', 'Partially Paid', 'Paid'
-    issued_at = db.Column(db.DateTime, default=datetime.utcnow)
+    issued_at = db.Column(db.DateTime, default=utc_now)
     
     # Relationships
-    payments = db.relationship('Payment', backref='bill', cascade='all, delete-orphan', lazy=True)
+    payments = db.relationship('Payment', backref='bill', lazy=True)
 
     @property
     def total_paid(self):
-        return sum(float(payment.amount) for payment in self.payments)
+        return sum((Decimal(str(payment.amount)) for payment in self.payments), Decimal('0.00'))
 
     @property
     def balance_due(self):
-        bal = float(self.grand_total) - self.total_paid
-        return max(0.0, round(bal, 2))
+        total = Decimal(str(self.grand_total or '0.00'))
+        bal = total - self.total_paid
+        return max(Decimal('0.00'), bal.quantize(Decimal('0.01')))
 
     def update_payment_status(self):
         paid = self.total_paid
-        total = float(self.grand_total)
-        if paid >= (total - 0.01) and total > 0:
+        total = Decimal(str(self.grand_total or '0.00'))
+        if paid >= total and total > Decimal('0.00'):
             self.payment_status = 'Paid'
-        elif paid > 0:
+        elif paid > Decimal('0.00'):
             self.payment_status = 'Partially Paid'
         else:
             self.payment_status = 'Unpaid'
 
     def __repr__(self):
-        return f"<Bill {self.invoice_number} - {self.payment_status} (${self.grand_total})>"
+        return f"<Bill {self.invoice_number} - {self.payment_status} (₹{self.grand_total})>"
 
 
 # ---------------------------------------------------------------------
@@ -257,14 +300,18 @@ class Bill(db.Model):
 # ---------------------------------------------------------------------
 class Payment(db.Model):
     __tablename__ = 'Payments'
+    __table_args__ = (
+        db.CheckConstraint('amount > 0', name='check_payment_amount_positive'),
+        db.CheckConstraint("payment_method IN ('Cash', 'Credit Card', 'Debit Card', 'UPI / Online', 'Bank Transfer')", name='check_payment_method'),
+    )
     
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    bill_id = db.Column(db.Integer, db.ForeignKey('Bills.id', ondelete='CASCADE'), nullable=False)
+    bill_id = db.Column(db.Integer, db.ForeignKey('Bills.id', ondelete='RESTRICT'), nullable=False)
     amount = db.Column(db.Numeric(10, 2), nullable=False)
     payment_method = db.Column(db.String(40), nullable=False, default='Cash') # 'Cash', 'Credit Card', 'Debit Card', 'UPI / Online', 'Bank Transfer'
-    transaction_reference = db.Column(db.String(100), nullable=True)
-    payment_date = db.Column(db.DateTime, default=datetime.utcnow)
+    transaction_reference = db.Column(db.String(100), nullable=True, unique=True, index=True)
+    payment_date = db.Column(db.DateTime, default=utc_now)
     notes = db.Column(db.Text, nullable=True)
 
     def __repr__(self):
-        return f"<Payment ${self.amount} for Bill #{self.bill_id} via {self.payment_method}>"
+        return f"<Payment ₹{self.amount} for Bill #{self.bill_id} via {self.payment_method}>"

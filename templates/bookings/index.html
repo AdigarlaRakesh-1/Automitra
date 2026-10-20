@@ -113,6 +113,7 @@
               </a>
               {% if b.status in ['Pending', 'Confirmed'] %}
                 <form action="{{ url_for('bookings.update_status', booking_id=b.id) }}" method="POST">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                   <input type="hidden" name="status" value="In Progress">
                   <button type="submit" class="btn btn-primary btn-sm" title="Start workshop service">Start</button>
                 </form>
